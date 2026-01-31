@@ -1796,6 +1796,23 @@
       "verification": ""
     },
     {
+      "date": "1958-09",
+      "age": 75,
+      "movementType": "长途移动",
+      "event": "视察安徽",
+      "coordinates": {
+        "start": {
+          "province": "安徽省",
+          "city": "合肥市"
+        },
+        "end": {
+          "province": "安徽省",
+          "city": "马鞍山市"
+        }
+      },
+      "verification": "http://dangshi.people.com.cn/n/2013/1225/c85037-23945725.html"
+    },
+    {
       "date": "1959-07-02",
       "age": 65,
       "movementType": "长途移动",
