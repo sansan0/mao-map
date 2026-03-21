@@ -4,21 +4,40 @@
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <title>毛泽东生平地理轨迹</title>
-    <link rel="icon" href="favicon.ico" />
-    <link
-      rel="stylesheet"
-      href="https://cdn.jsdelivr.net/npm/leaflet@1.9.4/dist/leaflet.css"
-    />
+    <!-- 本地 Leaflet (非 CDN) -->
+    <link rel="stylesheet" href="libs/leaflet/leaflet.css" />
+    <!-- 共享样式 -->
     <link rel="stylesheet" href="assets/css/style.css" />
+    <!-- Tauri 桌面端适配样式 -->
+    <link rel="stylesheet" href="src/tauri.css" />
   </head>
   <body>
-    <div id="container">
-      <!-- 语言选择器 -->
-      <div id="language-selector" class="language-selector">
-        <button class="lang-btn active" data-lang="zh-CN">中文</button>
-        <button class="lang-btn" data-lang="en">English</button>
+    <!-- 自定义标题栏（无边框窗口，通过 JS mousedown 启动拖拽） -->
+    <div id="titlebar">
+      <div class="titlebar-left">
+        <span class="titlebar-title" data-i18n="meta.title">毛泽东生平地理轨迹</span>
       </div>
+      <div class="titlebar-center">
+        <!-- 语言切换 -->
+        <div id="language-selector" class="language-selector titlebar-lang">
+          <button class="lang-btn active" data-lang="zh-CN">中文</button>
+          <button class="lang-btn" data-lang="en">EN</button>
+        </div>
+      </div>
+      <div class="titlebar-controls">
+        <button class="titlebar-btn" id="titlebar-minimize" title="最小化">
+          <svg width="10" height="1" viewBox="0 0 10 1"><rect fill="currentColor" width="10" height="1"/></svg>
+        </button>
+        <button class="titlebar-btn" id="titlebar-maximize" title="最大化">
+          <svg width="10" height="10" viewBox="0 0 10 10"><rect fill="none" stroke="currentColor" stroke-width="1" x="0.5" y="0.5" width="9" height="9"/></svg>
+        </button>
+        <button class="titlebar-btn titlebar-close" id="titlebar-close" title="关闭">
+          <svg width="10" height="10" viewBox="0 0 10 10"><line stroke="currentColor" stroke-width="1" x1="0" y1="0" x2="10" y2="10"/><line stroke="currentColor" stroke-width="1" x1="10" y1="0" x2="0" y2="10"/></svg>
+        </button>
+      </div>
+    </div>
 
+    <div id="container">
       <!-- 地图容器 -->
       <div id="map" class="panel-visible"></div>
 
@@ -34,15 +53,15 @@
       </button>
 
       <!-- 右下角功能按钮组 -->
-      <button id="settings-btn" class="settings-btn" title="设置" data-i18n="ui.settings.title" data-i18n-attr="title">⚙</button>
-      <button id="music-btn" class="music-btn" data-i18n="ui.music.title" data-i18n-attr="title" title="背景音乐">🎵</button>
-      <button id="feedback-btn" class="feedback-btn" data-i18n="ui.feedback.title" data-i18n-attr="title" title="意见反馈">💬</button>
+      <button id="settings-btn" class="settings-btn" title="设置" data-i18n="ui.settings.title" data-i18n-attr="title">&#x2699;</button>
+      <button id="music-btn" class="music-btn" data-i18n="ui.music.title" data-i18n-attr="title" title="背景音乐">&#x1F3B5;</button>
+      <button id="feedback-btn" class="feedback-btn" data-i18n="ui.feedback.title" data-i18n-attr="title" title="意见反馈">&#x1F4AC;</button>
 
       <!-- 设置面板（右下角，包含统计+镜头设置） -->
       <div id="settings-panel" class="settings-panel">
         <div class="settings-panel-header">
           <h4 data-i18n="ui.stats.title">轨迹统计</h4>
-          <button class="settings-panel-close" id="settings-panel-close">×</button>
+          <button class="settings-panel-close" id="settings-panel-close">&#xD7;</button>
         </div>
         <div class="stats-section">
           <div class="stats-item">
@@ -67,10 +86,8 @@
           </div>
         </div>
         <div class="settings-divider"></div>
-        <!-- 镜头设置 -->
         <div class="camera-settings">
           <h5 data-i18n="ui.animation.cameraControl">镜头控制</h5>
-          <!-- 跟随模式选择 -->
           <div class="setting-row">
             <label data-i18n="ui.animation.followMode">跟随模式</label>
             <div class="follow-mode-selector" id="follow-mode-selector">
@@ -79,7 +96,6 @@
               <button class="follow-mode-btn" data-mode="off" data-i18n="ui.animation.followModes.off">关闭</button>
             </div>
           </div>
-          <!-- 跟随缩放级别（沿路模式下生效） -->
           <div class="setting-row" id="follow-zoom-row">
             <label data-i18n="ui.animation.followZoom">跟随缩放</label>
             <input type="range" id="follow-zoom-slider" min="5" max="10" value="7" step="0.5" />
@@ -116,33 +132,23 @@
         <!-- 当前事件信息（移动端） -->
         <div class="current-event-section">
           <div class="event-info-row">
-            <div class="event-date-mobile" id="event-date-mobile">
-              加载中...
-            </div>
-            <div class="event-location-mobile" id="event-location-mobile">
-              加载中...
-            </div>
+            <div class="event-date-mobile" id="event-date-mobile">加载中...</div>
+            <div class="event-location-mobile" id="event-location-mobile">加载中...</div>
           </div>
           <div class="event-info-row">
-            <div class="event-title-mobile" id="event-title-mobile">
-              加载中...
-            </div>
+            <div class="event-title-mobile" id="event-title-mobile">加载中...</div>
           </div>
           <div class="progress-info-mobile">
             <div class="info-item">
               <span class="info-label" data-i18n="ui.progress.event">事件</span>:
               <span class="info-value">
-                <span id="current-event-index-mobile">1</span>/<span
-                  id="total-event-count-mobile"
-                  >-</span
-                >
+                <span id="current-event-index-mobile">1</span>/<span id="total-event-count-mobile">-</span>
               </span>
             </div>
             <div class="info-item">
               <span class="info-label" data-i18n="ui.progress.age">年龄</span>:
               <span class="info-value">
-                <span id="current-age-mobile">0</span
-                ><span class="info-unit" data-i18n="ui.progress.ageUnit">岁</span>
+                <span id="current-age-mobile">0</span><span class="info-unit" data-i18n="ui.progress.ageUnit">岁</span>
               </span>
             </div>
             <div class="info-item">
@@ -157,14 +163,12 @@
             <span class="label" data-i18n="ui.timeline.start">开始</span>
             <span class="value">1893-12-26</span>
           </div>
-
           <!-- 当前事件详情区域（PC端） -->
           <div class="current-event-details">
             <div class="event-date" id="event-date" data-i18n="ui.timeline.loading">加载中...</div>
             <div class="event-title" id="event-title" data-i18n="ui.timeline.loading">加载中...</div>
             <div class="event-location" id="event-location" data-i18n="ui.timeline.loading">加载中...</div>
           </div>
-
           <div class="time-point end">
             <span class="label" data-i18n="ui.timeline.end">结束</span>
             <span class="value">1976-09-09</span>
@@ -173,17 +177,11 @@
 
         <div class="player-controls">
           <div class="player-controls-row">
-            <!-- 播放控制按钮 -->
             <div class="player-buttons">
-              <button class="player-btn" id="prev-btn" data-i18n="ui.controls.prev" data-i18n-attr="title" title="上一个事件">
-                ⏮
-              </button>
+              <button class="player-btn" id="prev-btn" data-i18n="ui.controls.prev" data-i18n-attr="title" title="上一个事件">⏮</button>
               <button class="player-btn" id="play-btn" data-i18n="ui.controls.play" data-i18n-attr="title" title="播放">▶</button>
-              <button class="player-btn" id="next-btn" data-i18n="ui.controls.next" data-i18n-attr="title" title="下一个事件">
-                ⏭
-              </button>
+              <button class="player-btn" id="next-btn" data-i18n="ui.controls.next" data-i18n-attr="title" title="下一个事件">⏭</button>
             </div>
-
             <!-- 速度控制（移动端） -->
             <div class="speed-control">
               <button class="speed-btn" data-speed="0" data-i18n="ui.controls.speedFast">快</button>
@@ -195,29 +193,12 @@
           <!-- 进度条区域 -->
           <div class="progress-section">
             <div class="progress-container">
-              <input
-                type="range"
-                id="timeline-slider"
-                min="0"
-                max="100"
-                value="0"
-                tabindex="0"
-                title="使用左右方向键或拖拽控制时间轴"
-              />
+              <input type="range" id="timeline-slider" min="0" max="100" value="0" tabindex="0" title="使用左右方向键或拖拽控制时间轴" />
             </div>
             <div class="progress-details">
-              <span class="progress-item"
-                ><span data-i18n="ui.progress.event">事件</span>: <span id="current-event-index-desktop">1</span>/<span
-                  id="total-event-count-desktop"
-                  >-</span
-                ></span
-              >
-              <span class="progress-item"
-                ><span data-i18n="ui.progress.age">年龄</span>: <span id="current-age-desktop">0</span><span data-i18n="ui.progress.ageUnit">岁</span></span
-              >
-              <span class="progress-item"
-                ><span data-i18n="ui.progress.progress">进度</span>: <span id="current-progress-desktop">0%</span></span
-              >
+              <span class="progress-item"><span data-i18n="ui.progress.event">事件</span>: <span id="current-event-index-desktop">1</span>/<span id="total-event-count-desktop">-</span></span>
+              <span class="progress-item"><span data-i18n="ui.progress.age">年龄</span>: <span id="current-age-desktop">0</span><span data-i18n="ui.progress.ageUnit">岁</span></span>
+              <span class="progress-item"><span data-i18n="ui.progress.progress">进度</span>: <span id="current-progress-desktop">0%</span></span>
             </div>
           </div>
 
@@ -225,20 +206,14 @@
           <div class="player-speed">
             <label class="speed-label" data-i18n="ui.controls.speed">播放速度</label>
             <div class="custom-select-wrapper">
-              <div
-                class="custom-select"
-                id="custom-speed-select"
-                data-value="1"
-              >
+              <div class="custom-select" id="custom-speed-select" data-value="1">
                 <div class="select-display">
                   <span class="select-text" data-i18n="ui.controls.speedOptions.fast">快速</span>
                   <span class="select-arrow">▼</span>
                 </div>
                 <div class="select-dropdown">
                   <div class="select-option" data-value="0" data-i18n="ui.controls.speedOptions.veryFast">极快</div>
-                  <div class="select-option selected" data-value="1" data-i18n="ui.controls.speedOptions.fast">
-                    快速
-                  </div>
+                  <div class="select-option selected" data-value="1" data-i18n="ui.controls.speedOptions.fast">快速</div>
                   <div class="select-option" data-value="2" data-i18n="ui.controls.speedOptions.normal">正常</div>
                   <div class="select-option" data-value="3" data-i18n="ui.controls.speedOptions.slow">慢速</div>
                 </div>
@@ -254,50 +229,19 @@
       <!-- 音乐播放弹窗 -->
       <div id="music-modal" class="music-modal">
         <div class="music-modal-header">
-          <h3 data-i18n="ui.music.title">🎵 背景音乐</h3>
-          <button class="music-modal-close" id="music-modal-close" data-i18n="ui.music.close" data-i18n-attr="title" title="关闭">
-            ×
-          </button>
+          <h3 data-i18n="ui.music.title">&#x1F3B5; 背景音乐</h3>
+          <button class="music-modal-close" id="music-modal-close" data-i18n="ui.music.close" data-i18n-attr="title" title="关闭">×</button>
         </div>
         <div class="music-modal-content">
-          <!-- 当前播放歌曲信息 -->
           <div class="current-song-info">
             <div class="song-title" id="current-song-title" data-i18n="ui.music.selectSong">请选择歌曲</div>
             <div class="song-artist" id="current-song-artist">-</div>
           </div>
-
-          <!-- 音乐播放控制 -->
           <div class="music-controls">
-            <button
-              class="music-control-btn"
-              id="music-prev-btn"
-              data-i18n="ui.music.playPrev"
-              data-i18n-attr="title"
-              title="上一首"
-            >
-              ⏮
-            </button>
-            <button
-              class="music-control-btn music-play-btn"
-              id="music-play-btn"
-              data-i18n="ui.controls.play"
-              data-i18n-attr="title"
-              title="播放"
-            >
-              ▶
-            </button>
-            <button
-              class="music-control-btn"
-              id="music-next-btn"
-              data-i18n="ui.music.playNext"
-              data-i18n-attr="title"
-              title="下一首"
-            >
-              ⏭
-            </button>
+            <button class="music-control-btn" id="music-prev-btn" data-i18n="ui.music.playPrev" data-i18n-attr="title" title="上一首">⏮</button>
+            <button class="music-control-btn music-play-btn" id="music-play-btn" data-i18n="ui.controls.play" data-i18n-attr="title" title="播放">▶</button>
+            <button class="music-control-btn" id="music-next-btn" data-i18n="ui.music.playNext" data-i18n-attr="title" title="下一首">⏭</button>
           </div>
-
-          <!-- 音乐进度条 -->
           <div class="music-progress-container">
             <div class="music-progress-bar">
               <div class="music-progress-fill" id="music-progress-fill"></div>
@@ -307,40 +251,20 @@
               <span id="music-total-time">00:00</span>
             </div>
           </div>
-
-          <!-- 音量控制 -->
           <div class="music-volume-control">
-            <span class="volume-icon">🔊</span>
-            <input
-              type="range"
-              id="music-volume-slider"
-              min="0"
-              max="100"
-              value="50"
-              class="volume-slider"
-            />
+            <span class="volume-icon">&#x1F50A;</span>
+            <input type="range" id="music-volume-slider" min="0" max="100" value="50" class="volume-slider" />
             <span class="volume-value" id="music-volume-value">50%</span>
           </div>
-
-          <!-- 歌曲列表 -->
           <div class="music-playlist">
             <h4 data-i18n="ui.music.playlist">播放列表</h4>
             <div class="playlist-items" id="music-playlist-items"></div>
           </div>
-
-          <!-- 本地音乐上传 -->
           <div class="music-upload-section">
             <h4 data-i18n="ui.music.localMusic">本地音乐</h4>
             <div class="upload-area">
-              <input
-                type="file"
-                id="music-file-input"
-                accept="audio/*"
-                style="display: none"
-              />
-              <button class="upload-btn" id="music-upload-btn" data-i18n="ui.music.uploadBtn">
-                📁 选择本地音乐文件
-              </button>
+              <input type="file" id="music-file-input" accept="audio/*" style="display: none" />
+              <button class="upload-btn" id="music-upload-btn" data-i18n="ui.music.uploadBtn">&#x1F4C1; 选择本地音乐文件</button>
               <p class="upload-hint" data-i18n="ui.music.uploadHint">支持 MP3, WAV, OGG 格式</p>
             </div>
           </div>
@@ -350,30 +274,21 @@
       <!-- 反馈弹窗背景遮罩 -->
       <div id="feedback-backdrop" class="feedback-backdrop"></div>
 
-      <!-- 反馈弹窗 -->
+      <!-- 反馈弹窗（桌面端适配：移除公众号，调整外链行为） -->
       <div id="feedback-modal" class="feedback-modal">
         <div class="feedback-modal-header">
-          <h3 data-i18n="ui.feedback.title">💬 意见反馈</h3>
-          <button
-            class="feedback-modal-close"
-            id="feedback-modal-close"
-            data-i18n="ui.music.close"
-            data-i18n-attr="title"
-            title="关闭"
-          >
-            ×
-          </button>
+          <h3 data-i18n="ui.feedback.title">&#x1F4AC; 意见反馈</h3>
+          <button class="feedback-modal-close" id="feedback-modal-close" data-i18n="ui.music.close" data-i18n-attr="title" title="关闭">×</button>
         </div>
         <div class="feedback-modal-content">
           <div class="feedback-item" id="feedback-issues">
-            <div class="feedback-icon">🛠️</div>
+            <div class="feedback-icon">&#x1F6E0;&#xFE0F;</div>
             <div class="feedback-info">
               <div class="feedback-title" data-i18n="ui.feedback.issues.title">问题反馈</div>
               <div class="feedback-desc" data-i18n="ui.feedback.issues.desc">发现bug或建议改进</div>
             </div>
             <div class="feedback-arrow">→</div>
           </div>
-
           <div class="feedback-item" id="feedback-project">
             <div class="feedback-icon">⭐</div>
             <div class="feedback-info">
@@ -384,12 +299,12 @@
           </div>
 
           <div class="feedback-item" id="feedback-wechat">
-            <div class="feedback-icon">📱</div>
+            <div class="feedback-icon">&#x1F4F1;</div>
             <div class="feedback-info">
               <div class="feedback-title" data-i18n="ui.feedback.wechat.title">关注公众号</div>
               <div class="feedback-desc" data-i18n="ui.feedback.wechat.desc">硅基茶水间 - 交流讨论</div>
             </div>
-            <div class="feedback-arrow">→</div>
+            <div class="feedback-arrow">&#x2192;</div>
           </div>
         </div>
       </div>
@@ -421,13 +336,9 @@
           <div class="visit-summary" id="panel-visit-summary">
             截止当前时间点共访问 <span class="visit-count-highlight">0</span> 次
           </div>
-          <button class="panel-close" id="panel-close-btn" data-i18n="ui.music.close" data-i18n-attr="title" title="关闭">
-            ×
-          </button>
+          <button class="panel-close" id="panel-close-btn" data-i18n="ui.music.close" data-i18n-attr="title" title="关闭">×</button>
         </div>
-        <div class="panel-content" id="panel-content">
-          <!-- 事件列表 -->
-        </div>
+        <div class="panel-content" id="panel-content"></div>
       </div>
 
       <!-- 加载提示 -->
@@ -440,9 +351,13 @@
     <!-- 音频元素 -->
     <audio id="music-audio" preload="none"></audio>
 
-    <script src="https://cdn.jsdelivr.net/npm/leaflet@1.9.4/dist/leaflet.js"></script>
-    <script src="https://cdn.jsdelivr.net/gh/Igor-Vladyka/leaflet.motion/dist/leaflet.motion.min.js"></script>
+    <!-- 本地 Leaflet (非 CDN) -->
+    <script src="libs/leaflet/leaflet.js"></script>
+    <script src="libs/leaflet-motion/leaflet.motion.min.js"></script>
+    <!-- 共享脚本 -->
     <script src="assets/js/i18n.js"></script>
     <script src="assets/js/app.js"></script>
+    <!-- Tauri 窗口控制脚本 -->
+    <script src="src/tauri-titlebar.js"></script>
   </body>
 </html>

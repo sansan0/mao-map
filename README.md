@@ -1,3 +1,9 @@
+<div align="right">
+
+[English](README_EN.md) | 中文
+
+</div>
+
 <div align="center">
 
 # 📍 跟着教员走遍中国 - 毛主席足迹地图
@@ -5,6 +11,8 @@
 [![PC端访问](https://img.shields.io/badge/PC端-支持-4285F4?style=flat-square&logo=windows&logoColor=white)](#)
 [![移动端访问](https://img.shields.io/badge/移动端-支持-4285F4?style=flat-square&logo=android&logoColor=white)](#)
 [![GitHub Pages](https://img.shields.io/badge/GitHub_Pages-在线访问-4285F4?style=flat-square&logo=github&logoColor=white)](https://sansan0.github.io/mao-map)
+[![Windows 桌面版](https://img.shields.io/badge/Windows-桌面版下载-0078D4?style=flat-square&logo=windows&logoColor=white)](https://github.com/sansan0/mao-map/releases/latest)
+[![macOS 桌面版](https://img.shields.io/badge/macOS-桌面版下载-000000?style=flat-square&logo=apple&logoColor=white)](https://github.com/sansan0/mao-map/releases/latest)
 
 </div>
 
@@ -13,6 +21,8 @@
 本项目通过数据可视化的力量，将毛泽东主席自 1893 年至 1976 年波澜壮阔的一生，浓缩于一张可交互的动态地图之上。让那段恢弘的历史"活"起来，清晰、生动地展现伟人在中国历史洪流中的每一个关键抉择与地理印记。
 
 **在线体验：[https://sansan0.github.io/mao-map/](https://sansan0.github.io/mao-map/)**
+
+**桌面版下载：[GitHub Releases](https://github.com/sansan0/mao-map/releases/latest)**（Windows 安装包 / macOS DMG）
 
 <p align="center">
   <img src="docs/images/image.png" alt="电脑效果" />
@@ -36,6 +46,15 @@
 - **实时统计**：动态显示移动次数、访问省市、国际移动等数据
 - **进度追踪**：实时显示当前播放进度、年龄、事件序号等信息
 - **可视化图表**：直观展示历史轨迹的统计信息
+
+### 🖥️ 桌面客户端
+
+基于 Tauri v2 构建，支持 Windows 和 macOS：
+
+- **系统托盘**：关闭窗口自动收入托盘，右键菜单支持置顶显示、开机启动
+- **智能镜头跟随**：三种模式可选 —— 智能（距离自适应）、沿路（缓缓跟随路径）、关闭
+- **统一速度控制**：单一速度档位同时控制播放、路径动画和镜头跟随
+- **设置持久化**：语言、置顶、开机启动等偏好自动保存
 
 ### PC 端快捷键
 

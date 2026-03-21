@@ -1,0 +1,22 @@
+[package]
+name = "mao-map"
+version = "2.0.0"
+description = "毛泽东生平地理轨迹可视化桌面应用"
+authors = ["sansan0"]
+license = "GPL-3.0"
+edition = "2021"
+
+[lib]
+name = "mao_map_lib"
+crate-type = ["staticlib", "cdylib", "rlib"]
+
+[build-dependencies]
+tauri-build = { version = "2", features = [] }
+
+[dependencies]
+tauri = { version = "2", features = ["tray-icon", "image-png"] }
+tauri-plugin-autostart = "2"
+tauri-plugin-opener = "2"
+dirs = "6"
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"

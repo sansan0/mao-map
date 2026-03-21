@@ -1,0 +1,208 @@
+/* ==================== Tauri 桌面端适配样式 ==================== */
+/* 设计语言：与主页面一致 - 白色/毛玻璃/蓝色(#1890ff)主调 */
+
+/* ==================== 自定义标题栏 ==================== */
+#titlebar {
+  display: flex;
+  align-items: center;
+  height: 32px;
+  background: rgba(255, 255, 255, 0.85);
+  backdrop-filter: blur(12px);
+  -webkit-backdrop-filter: blur(12px);
+  border-bottom: 1px solid rgba(0, 0, 0, 0.06);
+  color: #333;
+  font-size: 13px;
+  padding: 0 0 0 12px;
+  user-select: none;
+  -webkit-user-select: none;
+  position: fixed;
+  top: 0;
+  left: 0;
+  right: 0;
+  z-index: 10000;
+}
+
+/* 左侧：标题 - 固定宽度，防止语言切换时中间区域偏移 */
+.titlebar-left {
+  display: flex;
+  align-items: center;
+  width: 200px;
+  flex-shrink: 0;
+}
+
+.titlebar-title {
+  font-weight: 500;
+  font-size: 12px;
+  color: #555;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  letter-spacing: 0.3px;
+}
+
+/* 中间：语言切换 - flex:1 占满剩余空间，内容居中 */
+.titlebar-center {
+  flex: 1;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  min-width: 0;
+}
+
+/* 右侧：窗口控制按钮 - 固定宽度，与左侧对称 */
+.titlebar-controls {
+  display: flex;
+  align-items: center;
+  height: 100%;
+  flex-shrink: 0;
+}
+
+/* ==================== 标题栏语言切换 ==================== */
+.titlebar-lang {
+  position: static !important;
+  display: flex !important;
+  gap: 4px;
+  background: rgba(0, 0, 0, 0.04);
+  border-radius: 6px;
+  padding: 2px;
+  box-shadow: none !important;
+}
+
+.titlebar-lang .lang-btn {
+  padding: 2px 12px;
+  font-size: 11px;
+  border: 1px solid transparent;
+  background: transparent;
+  color: #666;
+  cursor: pointer;
+  border-radius: 4px;
+  transition: all 0.2s;
+  line-height: 1.5;
+  min-width: unset;
+  font-weight: 500;
+}
+
+.titlebar-lang .lang-btn:hover {
+  color: #1890ff;
+  background: rgba(24, 144, 255, 0.06);
+}
+
+.titlebar-lang .lang-btn.active {
+  color: #fff;
+  background: #1890ff;
+  border-color: #1890ff;
+  box-shadow: 0 1px 4px rgba(24, 144, 255, 0.3);
+  font-weight: 600;
+}
+
+/* ==================== 窗口控制按钮 ==================== */
+.titlebar-btn {
+  width: 46px;
+  height: 32px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  border: none;
+  background: transparent;
+  color: #666;
+  cursor: pointer;
+  transition: background-color 0.12s, color 0.12s;
+  padding: 0;
+  line-height: 1;
+}
+
+.titlebar-btn svg {
+  display: block;
+}
+
+.titlebar-btn:hover {
+  background: rgba(0, 0, 0, 0.06);
+  color: #333;
+}
+
+.titlebar-btn:active {
+  background: rgba(0, 0, 0, 0.1);
+}
+
+.titlebar-close:hover {
+  background: #e81123 !important;
+  color: #fff !important;
+}
+
+.titlebar-close:hover svg line {
+  stroke: #fff;
+}
+
+.titlebar-close:active {
+  background: #c50f1f !important;
+  color: #fff !important;
+}
+
+/* ==================== 全局布局偏移（为标题栏腾出 32px） ==================== */
+
+body {
+  padding-top: 32px !important;
+}
+
+#container {
+  height: calc(100vh - 32px) !important;
+}
+
+#map {
+  height: calc(100vh - 32px) !important;
+}
+
+/* ==================== 隐藏原始浏览器版语言选择器 ==================== */
+#container > .language-selector:not(.titlebar-lang) {
+  display: none !important;
+}
+
+/* ==================== fixed 定位元素偏移修正 ==================== */
+/* 这些元素在原始 CSS 中使用 position:fixed，需要补偿标题栏高度 */
+
+/* 设置面板（右下角，不需要额外偏移） */
+
+/* 时间轴控制（原始用 bottom 定位，不需要修改） */
+
+/* 反馈按钮 & 音乐按钮（原始用 bottom + right 的 fixed 定位）
+   这些按钮的 bottom 值无需修改——它们相对视口底部定位，
+   标题栏在顶部，不影响底部空间 */
+
+/* ==================== 桌面端优化 ==================== */
+@media (min-width: 769px) {
+  .toggle-panel-btn {
+    display: none !important;
+  }
+
+  .current-event-section {
+    display: none !important;
+  }
+
+  .speed-control {
+    display: none !important;
+  }
+}
+
+/* 反馈弹窗桌面端适配 */
+.feedback-modal {
+  max-width: 380px;
+}
+
+/* ==================== 滚动条美化 ==================== */
+::-webkit-scrollbar {
+  width: 6px;
+  height: 6px;
+}
+
+::-webkit-scrollbar-track {
+  background: transparent;
+}
+
+::-webkit-scrollbar-thumb {
+  background: rgba(0, 0, 0, 0.15);
+  border-radius: 3px;
+}
+
+::-webkit-scrollbar-thumb:hover {
+  background: rgba(0, 0, 0, 0.25);
+}

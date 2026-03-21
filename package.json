@@ -1,0 +1,17 @@
+{
+  "name": "mao-map",
+  "version": "2.0.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "dev": "vite",
+    "build": "node scripts/build.js",
+    "tauri": "tauri",
+    "tauri:dev": "node scripts/dev.mjs",
+    "tauri:build": "tauri build"
+  },
+  "devDependencies": {
+    "@tauri-apps/cli": "^2.9.0",
+    "vite": "^6.0.0"
+  }
+}

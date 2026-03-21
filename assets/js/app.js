@@ -148,10 +148,10 @@ let highlightTimeout = null;
 let currentHighlightedEventIndex = -1;
 
 let animationConfig = {
-  pathDuration: 5000, // 控制路径绘制速度
+  pathDuration: 1200, // 路径绘制时长（由速度档位自动设置）
   timelineDuration: 1500, // 时间轴动画时长
-  cameraFollowDuration: 2000, // 镜头跟随动画时长
-  cameraPanDuration: 1500, //镜头平移动画时长
+  cameraFollowDuration: 800, // 镜头跟随动画时长（由速度档位自动设置）
+  cameraPanDuration: 600, // 镜头平移动画时长（由速度档位自动设置）
   isAnimating: false,
   motionOptions: {
     auto: false, // 手动控制动画
@@ -159,29 +159,51 @@ let animationConfig = {
   },
 };
 
-// 镜头速度档位配置
-const CAMERA_SPEED_LEVELS = [
+// 统一速度档位配置：用户只需选择一个速度，内部自动联动所有参数
+const UNIFIED_SPEED_PRESETS = [
   {
-    name: "ui.animation.speedLevels.fastest",
-    cameraFollowDuration: 600,
-    cameraPanDuration: 400,
+    name: "ui.controls.speedOptions.veryFast",
+    playInterval: 800,      // 事件间等待
+    pathDuration: 600,      // 路径绘制时长
+    cameraFollowDuration: 400, // 镜头 fitBounds 时长
+    cameraPanDuration: 300,    // 镜头 setView 时长
   },
   {
-    name: "ui.animation.speedLevels.fast",
+    name: "ui.controls.speedOptions.fast",
+    playInterval: 1500,
+    pathDuration: 1200,
+    cameraFollowDuration: 800,
+    cameraPanDuration: 600,
+  },
+  {
+    name: "ui.controls.speedOptions.normal",
+    playInterval: 3000,
+    pathDuration: 2500,
     cameraFollowDuration: 2000,
     cameraPanDuration: 1500,
   },
   {
-    name: "ui.animation.speedLevels.slow",
+    name: "ui.controls.speedOptions.slow",
+    playInterval: 5000,
+    pathDuration: 4000,
     cameraFollowDuration: 3500,
     cameraPanDuration: 2800,
   },
-  {
-    name: "ui.animation.speedLevels.slowest",
-    cameraFollowDuration: 5000,
-    cameraPanDuration: 4000,
-  },
 ];
+
+let currentSpeedLevel = 1; // 默认"快速"档
+let pathSpeedMultiplier = 2.5; // 路径动画时长倍率 (1x-5x)，越大动画越慢
+
+// 用户手动交互地图后暂停镜头跟随的计时器
+let userInteractionTimeout = null;
+let isUserInteracting = false;
+
+// 镜头跟随模式: "smart"(智能) | "path"(沿路) | "off"(关闭)
+let cameraFollowMode = "smart";
+// 沿路跟随的缩放级别
+let pathFollowZoom = 7;
+// 沿路跟随动画帧 ID
+let pathFollowAnimationId = null;
 
 let motionPaths = new Map();
 let animationQueue = [];
@@ -195,10 +217,6 @@ const INTERNATIONAL_COORDINATES = {
 /**
  * 检测是否为移动设备
  */
-function isMobileDevice() {
-  return window.innerWidth <= 768;
-}
-
 // ==================== 移动端交互 ====================
 /**
  * 切换控制面板显示/隐藏状态
@@ -557,30 +575,53 @@ function initMap() {
 /**
  * 初始化PC端统计面板悬停交互
  */
-function initStatsHover() {
-  const statsPanel = document.getElementById("stats-panel");
-  const hoverArea = document.getElementById("stats-hover-area");
+/**
+ * 初始化设置面板（右下角）
+ */
+function initSettingsPanel() {
+  const settingsBtn = document.getElementById("settings-btn");
+  const settingsPanel = document.getElementById("settings-panel");
+  const closeBtn = document.getElementById("settings-panel-close");
 
-  if (!statsPanel || !hoverArea || isMobileDevice()) return;
+  if (!settingsBtn || !settingsPanel) return;
 
-  function showStatsPanel() {
-    if (statsHoverTimeout) {
-      clearTimeout(statsHoverTimeout);
-      statsHoverTimeout = null;
+  function toggleSettings() {
+    const isVisible = settingsPanel.classList.contains("visible");
+    if (isVisible) {
+      settingsPanel.classList.remove("visible");
+      settingsBtn.classList.remove("active");
+    } else {
+      settingsPanel.classList.add("visible");
+      settingsBtn.classList.add("active");
     }
-    statsPanel.classList.add("visible");
   }
 
-  function hideStatsPanel() {
-    statsHoverTimeout = setTimeout(() => {
-      statsPanel.classList.remove("visible");
-    }, 150);
-  }
+  settingsBtn.addEventListener("click", toggleSettings);
+  if (closeBtn) closeBtn.addEventListener("click", toggleSettings);
 
-  hoverArea.addEventListener("mouseenter", showStatsPanel);
-  hoverArea.addEventListener("mouseleave", hideStatsPanel);
-  statsPanel.addEventListener("mouseenter", showStatsPanel);
-  statsPanel.addEventListener("mouseleave", hideStatsPanel);
+  // 点击外部关闭
+  document.addEventListener("click", (e) => {
+    if (settingsPanel.classList.contains("visible") &&
+        !settingsPanel.contains(e.target) &&
+        !settingsBtn.contains(e.target)) {
+      settingsPanel.classList.remove("visible");
+      settingsBtn.classList.remove("active");
+    }
+  });
+
+  // 初始化跟随模式选择器
+  initFollowModeSelector();
+
+  // 初始化跟随缩放滑块
+  initFollowZoomSlider();
+
+  // 初始化路径动画时长倍率
+  initPathSpeedMultiplier();
+}
+
+// 兼容旧调用
+function initStatsHover() {
+  initSettingsPanel();
 }
 
 // ==================== 详细信息面板控制 ====================
@@ -913,17 +954,25 @@ function hideFeedbackModal() {
 /**
  * 打开GitHub Issues页面
  */
+function openExternalUrl(url) {
+  if (window.__TAURI_INTERNALS__) {
+    window.__TAURI_INTERNALS__.invoke('plugin:opener|open_url', { url: url }).catch(function () {
+      window.open(url, "_blank", "noopener,noreferrer");
+    });
+  } else {
+    window.open(url, "_blank", "noopener,noreferrer");
+  }
+}
+
 function openGitHubIssues() {
-  const issuesUrl = "https://github.com/sansan0/mao-map/issues";
-  window.open(issuesUrl, "_blank", "noopener,noreferrer");
+  openExternalUrl("https://github.com/sansan0/mao-map/issues");
 }
 
 /**
  * 打开GitHub项目主页
  */
 function openGitHubProject() {
-  const projectUrl = "https://github.com/sansan0/mao-map";
-  window.open(projectUrl, "_blank", "noopener,noreferrer");
+  openExternalUrl("https://github.com/sansan0/mao-map");
 }
 
 /**
@@ -2129,13 +2178,41 @@ function ensureMarkersInteractivity() {
 }
 
 // ==================== 动画控制 ====================
+
+/**
+ * 拖动预览：只更新文字信息和进度，不重建路径和标记
+ * 避免拖动滑块时的卡顿和视觉闪烁
+ */
+function updateDragPreview(index) {
+  if (!trajectoryData || index >= trajectoryData.events.length || index < 0) return;
+
+  previousEventIndex = currentEventIndex;
+  currentEventIndex = index;
+  const event = trajectoryData.events[index];
+
+  // 只更新文字信息（轻量操作）
+  updateCurrentEventInfo(event);
+  updateProgress();
+}
+
 /**
  * 显示指定索引的事件
  */
-function showEventAtIndex(index, animated = true, isUserDrag = false) {
+function showEventAtIndex(index, animated = true, isUserAction = false) {
   if (!trajectoryData || index >= trajectoryData.events.length || index < 0)
     return;
-  if (animationConfig.isAnimating && !isUserDrag) return;
+
+  // 动画锁逻辑：
+  // - 自动播放触发时（!isUserAction），如果正在动画中则跳过（防止堆叠）
+  // - 用户主动操作时（isUserAction），中断当前动画并立即执行
+  if (animationConfig.isAnimating && !isUserAction) return;
+
+  // 用户主动操作时清除之前的动画锁定时器
+  if (isUserAction && animationConfig._lockTimer) {
+    clearTimeout(animationConfig._lockTimer);
+    animationConfig._lockTimer = null;
+    animationConfig.isAnimating = false;
+  }
 
   const isMovingForward = index > currentEventIndex;
   const isMovingBackward = index < currentEventIndex;
@@ -2146,8 +2223,10 @@ function showEventAtIndex(index, animated = true, isUserDrag = false) {
 
   if (animated && (isMovingForward || isMovingBackward)) {
     animationConfig.isAnimating = true;
-    setTimeout(() => {
+    if (animationConfig._lockTimer) clearTimeout(animationConfig._lockTimer);
+    animationConfig._lockTimer = setTimeout(() => {
       animationConfig.isAnimating = false;
+      animationConfig._lockTimer = null;
     }, animationConfig.pathDuration + 100);
   }
 
@@ -2161,44 +2240,115 @@ function showEventAtIndex(index, animated = true, isUserDrag = false) {
     updatePathsStatic(index);
   }
 
-  if (isCameraFollowEnabled) {
-    handleCameraFollow(event, previousEventIndex, animated);
+  if (isCameraFollowEnabled && !isUserInteracting) {
+    if (cameraFollowMode === "path" && animated && (isMovingForward || isMovingBackward) && !isMovingBackward) {
+      // 沿路模式：追踪最新创建的 motion path
+      const latestMotionPath = motionPaths.get(index);
+      if (latestMotionPath) {
+        startPathFollowCamera(latestMotionPath);
+      } else {
+        handleCameraFollow(event, previousEventIndex, animated);
+      }
+    } else {
+      // 智能模式或回退
+      stopPathFollowCamera();
+      handleCameraFollow(event, previousEventIndex, animated);
+    }
   }
 
   if (animated) {
     setTimeout(() => {
       ensureMarkersInteractivity();
+      stopPathFollowCamera();
     }, animationConfig.pathDuration + 100);
   }
 }
 
 // ==================== 镜头跟随控制 ====================
+
 /**
- * 处理镜头跟随逻辑
+ * 计算两个坐标之间的近似距离（度数距离，非精确球面距离，用于快速分级即可）
+ */
+function coordDistance(a, b) {
+  if (!a || !b) return 0;
+  const dlat = a[1] - b[1];
+  const dlng = a[0] - b[0];
+  return Math.sqrt(dlat * dlat + dlng * dlng);
+}
+
+/**
+ * 处理镜头跟随逻辑（智能策略）
+ *
+ * 策略：
+ * - 用户正在手动交互地图时，暂不跟随
+ * - 短距离移动（同城/邻省）：flyTo 终点，保持当前缩放级别，平滑过渡
+ * - 长途移动（跨多省）：flyToBounds 展示完整路径
+ * - 原地活动：不移动镜头
+ * - 镜头动画时长略短于路径动画时长，让镜头先到位
  */
 function handleCameraFollow(currentEvent, previousIndex, animated = true) {
   if (!currentEvent) return;
 
+  // 用户正在手动交互地图，暂停跟随
+  if (isUserInteracting) return;
+
+  const prevEvent = previousIndex >= 0 ? trajectoryData.events[previousIndex] : null;
+  const startCoords = currentEvent.startCoords;
+  const endCoords = currentEvent.endCoords;
+
+  if (!endCoords) return;
+
+  // 计算移动距离
+  const distance = startCoords ? coordDistance(startCoords, endCoords) : 0;
+
+  // 镜头时长略短于路径动画，让镜头先到位
+  const cameraDuration = animated ? Math.max(300, animationConfig.cameraFollowDuration * 0.8) / 1000 : 0;
+  const panDuration = animated ? Math.max(200, animationConfig.cameraPanDuration * 0.8) / 1000 : 0;
+
+  // 原地活动（距离极小或无起点）：温和平移到终点，不改变缩放
+  if (distance < 0.5) {
+    const [lng, lat] = endCoords;
+    map.flyTo([lat, lng], Math.max(map.getZoom(), 6), {
+      animate: animated,
+      duration: panDuration,
+      easeLinearity: 0.5,
+    });
+    return;
+  }
+
+  // 短距离移动（< 3度，约同省或邻省）：飞到终点，适度缩放
+  if (distance < 3) {
+    const [lng, lat] = endCoords;
+    // 根据距离选择缩放级别：越近越放大
+    const targetZoom = distance < 1 ? Math.max(map.getZoom(), 7) :
+                       distance < 2 ? Math.max(map.getZoom(), 6) : 6;
+    map.flyTo([lat, lng], targetZoom, {
+      animate: animated,
+      duration: cameraDuration,
+      easeLinearity: 0.5,
+    });
+    return;
+  }
+
+  // 长途移动（≥ 3度）：展示完整路径
   const bounds = calculatePathBounds(currentEvent, previousIndex);
   if (bounds && bounds.isValid()) {
-    const panOptions = {
+    map.flyToBounds(bounds, {
       animate: animated,
-      duration: animated ? animationConfig.cameraFollowDuration / 1000 : 0, // 镜头时长
+      duration: cameraDuration,
       paddingTopLeft: [50, 50],
       paddingBottomRight: [50, 100],
       maxZoom: 8,
       easeLinearity: 0.5,
-    };
-
-    map.fitBounds(bounds, panOptions);
-  } else if (currentEvent.endCoords) {
-    const [lng, lat] = currentEvent.endCoords;
-    const panOptions = {
+    });
+  } else {
+    // fallback：飞到终点
+    const [lng, lat] = endCoords;
+    map.flyTo([lat, lng], 6, {
       animate: animated,
-      duration: animated ? animationConfig.cameraPanDuration / 1000 : 0, // 平移时长
+      duration: cameraDuration,
       easeLinearity: 0.5,
-    };
-    map.setView([lat, lng], Math.max(map.getZoom(), 6), panOptions);
+    });
   }
 }
 
@@ -2254,61 +2404,225 @@ function calculatePathBounds(currentEvent, previousIndex) {
 }
 
 /**
- * 切换镜头跟随状态
+ * 初始化用户地图交互检测
+ * 用户手动拖拽/缩放地图时，暂停镜头跟随数秒
  */
-function toggleCameraFollow() {
-  isCameraFollowEnabled = !isCameraFollowEnabled;
-  updateCameraFollowUI();
+function initMapInteractionDetection() {
+  if (!map) return;
 
+  const pauseDuration = 4000; // 用户交互后暂停跟随 4 秒
+
+  function onUserInteraction() {
+    isUserInteracting = true;
+    if (userInteractionTimeout) clearTimeout(userInteractionTimeout);
+    userInteractionTimeout = setTimeout(() => {
+      isUserInteracting = false;
+      userInteractionTimeout = null;
+    }, pauseDuration);
+  }
+
+  map.on('dragstart', onUserInteraction);
+  map.on('zoomstart', function(e) {
+    // 只检测用户手动缩放（非程序触发）
+    // flyTo/flyToBounds 会触发 zoomstart，但不应标记为用户交互
+    // 通过检查是否有正在进行的动画来区分
+    if (!animationConfig.isAnimating) {
+      onUserInteraction();
+    }
+  });
+}
+
+/**
+ * 初始化跟随模式选择器
+ */
+function initFollowModeSelector() {
+  const selector = document.getElementById("follow-mode-selector");
+  if (!selector) return;
+
+  // 从 localStorage 恢复
   try {
-    localStorage.setItem(
-      "cameraFollowEnabled",
-      isCameraFollowEnabled.toString()
-    );
-  } catch (error) {
-    console.warn("无法保存镜头跟随设置:", error);
+    const saved = localStorage.getItem("cameraFollowMode");
+    if (saved && ["smart", "path", "off"].includes(saved)) {
+      cameraFollowMode = saved;
+    }
+  } catch (e) {}
+
+  // 兼容旧设置
+  isCameraFollowEnabled = cameraFollowMode !== "off";
+
+  // 设置初始 UI 状态
+  const buttons = selector.querySelectorAll(".follow-mode-btn");
+  buttons.forEach((btn) => {
+    btn.classList.toggle("active", btn.dataset.mode === cameraFollowMode);
+    btn.addEventListener("click", () => {
+      buttons.forEach((b) => b.classList.remove("active"));
+      btn.classList.add("active");
+      cameraFollowMode = btn.dataset.mode;
+      isCameraFollowEnabled = cameraFollowMode !== "off";
+
+      // 显示/隐藏缩放滑块（仅沿路模式下有意义）
+      const zoomRow = document.getElementById("follow-zoom-row");
+      if (zoomRow) {
+        zoomRow.style.display = cameraFollowMode === "path" ? "flex" : "none";
+      }
+
+      try {
+        localStorage.setItem("cameraFollowMode", cameraFollowMode);
+      } catch (e) {}
+    });
+  });
+
+  // 初始显示状态
+  const zoomRow = document.getElementById("follow-zoom-row");
+  if (zoomRow) {
+    zoomRow.style.display = cameraFollowMode === "path" ? "flex" : "none";
   }
 }
 
 /**
- * 更新镜头跟随UI状态
+ * 初始化跟随缩放滑块
  */
-function updateCameraFollowUI() {
-  const cameraSwitch = document.getElementById("camera-follow-switch");
-  const cameraStatus = document.getElementById("camera-follow-status");
+function initFollowZoomSlider() {
+  const slider = document.getElementById("follow-zoom-slider");
+  const display = document.getElementById("follow-zoom-display");
+  if (!slider) return;
 
-  if (cameraSwitch) {
-    if (isCameraFollowEnabled) {
-      cameraSwitch.classList.add("active");
-    } else {
-      cameraSwitch.classList.remove("active");
+  // 从 localStorage 恢复
+  try {
+    const saved = localStorage.getItem("pathFollowZoom");
+    if (saved) {
+      pathFollowZoom = parseFloat(saved);
+      slider.value = pathFollowZoom;
+    }
+  } catch (e) {}
+
+  if (display) display.textContent = pathFollowZoom;
+
+  slider.addEventListener("input", (e) => {
+    pathFollowZoom = parseFloat(e.target.value);
+    if (display) display.textContent = pathFollowZoom;
+    try {
+      localStorage.setItem("pathFollowZoom", pathFollowZoom.toString());
+    } catch (e) {}
+  });
+}
+
+/**
+ * 初始化路径动画时长倍率滑块
+ */
+function initPathSpeedMultiplier() {
+  const slider = document.getElementById("path-speed-multiplier");
+  const display = document.getElementById("path-speed-display");
+  if (!slider) return;
+
+  // 从 localStorage 恢复
+  try {
+    const saved = localStorage.getItem("pathSpeedMultiplier");
+    if (saved) {
+      pathSpeedMultiplier = parseFloat(saved);
+      slider.value = pathSpeedMultiplier;
+    }
+  } catch (e) {}
+
+  if (display) display.textContent = pathSpeedMultiplier + "x";
+
+  slider.addEventListener("input", (e) => {
+    pathSpeedMultiplier = parseFloat(e.target.value);
+    if (display) display.textContent = pathSpeedMultiplier + "x";
+    // 重新应用当前速度档位（倍率会自动生效）
+    applySpeedPreset(currentSpeedLevel);
+    try {
+      localStorage.setItem("pathSpeedMultiplier", pathSpeedMultiplier.toString());
+    } catch (e) {}
+  });
+}
+
+/**
+ * 启动沿路径跟随镜头
+ * 通过追踪 leaflet.motion 的动画标记位置来实现
+ */
+function startPathFollowCamera(motionPath) {
+  stopPathFollowCamera();
+
+  if (!motionPath || cameraFollowMode !== "path") return;
+
+  // 先设置缩放级别
+  const currentCenter = map.getCenter();
+  map.setView(currentCenter, pathFollowZoom, { animate: true, duration: 0.5 });
+
+  // 获取路径坐标
+  const pathCoords = motionPath._originalPathCoords;
+  if (!pathCoords || pathCoords.length < 2) return;
+
+  const startTime = performance.now();
+  const duration = animationConfig.pathDuration;
+
+  function followFrame(now) {
+    const elapsed = now - startTime;
+    const progress = Math.min(elapsed / duration, 1);
+
+    // 用 easing 匹配路径动画的节奏
+    const easedProgress = easeInOutQuart(progress);
+
+    // 在路径坐标上插值出当前位置
+    const totalSegments = pathCoords.length - 1;
+    const segPos = easedProgress * totalSegments;
+    const segIndex = Math.min(Math.floor(segPos), totalSegments - 1);
+    const segFraction = segPos - segIndex;
+
+    const from = pathCoords[segIndex];
+    const to = pathCoords[Math.min(segIndex + 1, pathCoords.length - 1)];
+
+    const lat = from[0] + (to[0] - from[0]) * segFraction;
+    const lng = from[1] + (to[1] - from[1]) * segFraction;
+
+    // 平滑移动镜头到当前路径位置
+    map.panTo([lat, lng], {
+      animate: true,
+      duration: 0.15,
+      easeLinearity: 0.8,
+      noMoveStart: true,
+    });
+
+    if (progress < 1) {
+      pathFollowAnimationId = requestAnimationFrame(followFrame);
     }
   }
 
-  if (cameraStatus) {
-    cameraStatus.textContent = isCameraFollowEnabled ? "开启" : "关闭";
+  pathFollowAnimationId = requestAnimationFrame(followFrame);
+}
+
+/**
+ * 停止沿路径跟随镜头
+ */
+function stopPathFollowCamera() {
+  if (pathFollowAnimationId) {
+    cancelAnimationFrame(pathFollowAnimationId);
+    pathFollowAnimationId = null;
   }
 }
 
 /**
- * 初始化镜头跟随控制
+ * easeInOutQuart 缓动函数，与 leaflet.motion 的默认 easing 匹配
  */
+function easeInOutQuart(t) {
+  return t < 0.5 ? 8 * t * t * t * t : 1 - 8 * (--t) * t * t * t;
+}
+
+// 兼容旧代码调用
 function initCameraFollowControl() {
+  // 镜头跟随控制已移入设置面板
   try {
     const saved = localStorage.getItem("cameraFollowEnabled");
     if (saved !== null) {
       isCameraFollowEnabled = saved === "true";
+      if (!isCameraFollowEnabled) cameraFollowMode = "off";
     }
-  } catch (error) {
-    console.warn("无法读取镜头跟随设置:", error);
-  }
+  } catch (e) {}
+}
 
-  const cameraSwitch = document.getElementById("camera-follow-switch");
-  if (cameraSwitch) {
-    cameraSwitch.addEventListener("click", toggleCameraFollow);
-  }
-
-  updateCameraFollowUI();
+function updateCameraFollowUI() {
+  // 不再需要独立UI
 }
 
 // ==================== 路径高亮功能 ====================
@@ -2623,10 +2937,9 @@ function playNextEvent() {
     return;
   }
 
-  const waitTime = Math.max(
-    currentPlaySpeed,
-    animationConfig.pathDuration + 200
-  );
+  // 统一速度模型：等待时间 = 路径动画时长 + 缓冲，确保动画完成后再播下一个
+  const preset = UNIFIED_SPEED_PRESETS[currentSpeedLevel];
+  const waitTime = Math.max(preset.playInterval, animationConfig.pathDuration + 200);
 
   playInterval = setTimeout(() => {
     playNextEvent();
@@ -2638,7 +2951,7 @@ function playNextEvent() {
  */
 function nextEvent() {
   if (currentEventIndex < trajectoryData.events.length - 1) {
-    showEventAtIndex(currentEventIndex + 1, true, true);
+    showEventAtIndex(currentEventIndex + 1, true, true); // isUserAction=true
   }
 }
 
@@ -2647,7 +2960,7 @@ function nextEvent() {
  */
 function previousEvent() {
   if (currentEventIndex > 0) {
-    showEventAtIndex(currentEventIndex - 1, true, true);
+    showEventAtIndex(currentEventIndex - 1, true, true); // isUserAction=true
   }
 }
 
@@ -2699,126 +3012,85 @@ function handleTimelineKeydown(e) {
 
 // ==================== 动画设置控制 ====================
 /**
- * 初始化动画控制滑块
+ * 初始化动画控制（统一速度模型）
  */
 function initAnimationControls() {
-  const pathDurationSlider = document.getElementById("path-duration");
-  const pathDurationDisplay = document.getElementById("path-duration-display");
-  const cameraSpeedSlider = document.getElementById("camera-speed-slider");
-  const cameraSpeedDisplay = document.getElementById("camera-speed-display");
-
-  if (pathDurationSlider && pathDurationDisplay) {
-    pathDurationSlider.value = animationConfig.pathDuration;
-    pathDurationDisplay.textContent =
-      (animationConfig.pathDuration / 1000).toFixed(1) + "s";
-
-    pathDurationSlider.addEventListener("input", (e) => {
-      const newDuration = parseInt(e.target.value);
-      animationConfig.pathDuration = newDuration;
-
-      if (currentPlaySpeed < newDuration) {
-        currentPlaySpeed = newDuration + 500;
-        updateSpeedUI();
+  // 从本地存储恢复速度档位
+  try {
+    const saved = localStorage.getItem("speedLevel");
+    if (saved !== null) {
+      const level = parseInt(saved);
+      if (level >= 0 && level < UNIFIED_SPEED_PRESETS.length) {
+        currentSpeedLevel = level;
       }
-
-      pathDurationDisplay.textContent = (newDuration / 1000).toFixed(1) + "s";
-      updateAnimationDuration(newDuration);
-    });
+    }
+  } catch (error) {
+    console.warn("无法读取速度设置:", error);
   }
 
-  if (cameraSpeedSlider && cameraSpeedDisplay) {
-    // 从本地存储恢复设置
-    let savedSpeedLevel = 1;
-    try {
-      const saved = localStorage.getItem("cameraSpeedLevel");
-      if (saved !== null) {
-        savedSpeedLevel = parseInt(saved);
-        if (
-          savedSpeedLevel < 0 ||
-          savedSpeedLevel >= CAMERA_SPEED_LEVELS.length
-        ) {
-          savedSpeedLevel = 1;
-        }
-      }
-    } catch (error) {
-      console.warn("无法读取镜头速度设置:", error);
-    }
+  // 应用当前速度档位
+  applySpeedPreset(currentSpeedLevel);
+}
 
-    cameraSpeedSlider.value = savedSpeedLevel;
-    updateCameraSpeed(savedSpeedLevel);
+/**
+ * 应用统一速度档位：自动联动路径、镜头、播放间隔
+ */
+function applySpeedPreset(levelIndex) {
+  if (levelIndex < 0 || levelIndex >= UNIFIED_SPEED_PRESETS.length) return;
 
-    cameraSpeedSlider.addEventListener("input", (e) => {
-      const levelIndex = parseInt(e.target.value);
-      updateCameraSpeed(levelIndex);
+  const preset = UNIFIED_SPEED_PRESETS[levelIndex];
+  currentSpeedLevel = levelIndex;
+  currentPlaySpeed = preset.playInterval;
+  animationConfig.pathDuration = preset.pathDuration * pathSpeedMultiplier;
+  animationConfig.cameraFollowDuration = preset.cameraFollowDuration * pathSpeedMultiplier;
+  animationConfig.cameraPanDuration = preset.cameraPanDuration * pathSpeedMultiplier;
 
-      try {
-        localStorage.setItem("cameraSpeedLevel", levelIndex.toString());
-      } catch (error) {
-        console.warn("无法保存镜头速度设置:", error);
-      }
-    });
+  document.documentElement.style.setProperty(
+    "--path-animation-duration",
+    animationConfig.pathDuration + "ms"
+  );
+
+  // 更新所有速度相关 UI
+  updateAllSpeedUI();
+
+  try {
+    localStorage.setItem("speedLevel", levelIndex.toString());
+  } catch (error) {
+    console.warn("无法保存速度设置:", error);
   }
 }
 
 /**
- * 更新镜头速度配置
+ * 更新所有速度相关 UI 元素
  */
-function updateCameraSpeed(levelIndex) {
-  if (levelIndex < 0 || levelIndex >= CAMERA_SPEED_LEVELS.length) {
-    console.warn("无效的镜头速度档位:", levelIndex);
-    return;
+function updateAllSpeedUI() {
+  const preset = UNIFIED_SPEED_PRESETS[currentSpeedLevel];
+
+  // PC端下拉选择器
+  const speedSelect = document.getElementById("custom-speed-select");
+  if (speedSelect) {
+    speedSelect.dataset.value = currentSpeedLevel.toString();
+    const selectText = speedSelect.querySelector(".select-text");
+    if (selectText) {
+      selectText.textContent = i18n.t(preset.name);
+    }
+    // 更新选中状态
+    const options = speedSelect.querySelectorAll(".select-option");
+    options.forEach((opt) => {
+      opt.classList.toggle("selected", parseInt(opt.dataset.value) === currentSpeedLevel);
+    });
   }
 
-  const speedConfig = CAMERA_SPEED_LEVELS[levelIndex];
-  const cameraSpeedDisplay = document.getElementById("camera-speed-display");
-
-  animationConfig.cameraFollowDuration = speedConfig.cameraFollowDuration;
-  animationConfig.cameraPanDuration = speedConfig.cameraPanDuration;
-
-  if (cameraSpeedDisplay) {
-    cameraSpeedDisplay.textContent = i18n.t(speedConfig.name);
-  }
-
-  console.log(`镜头跟随速度已调整为: ${i18n.t(speedConfig.name)}`, {
-    跟随时长: speedConfig.cameraFollowDuration + "ms",
-    平移时长: speedConfig.cameraPanDuration + "ms",
+  // 移动端按钮组
+  const speedBtns = document.querySelectorAll(".speed-btn");
+  speedBtns.forEach((btn) => {
+    btn.classList.toggle("active", parseInt(btn.dataset.speed) === currentSpeedLevel);
   });
 }
 
-/**
- * 更新动画时长配置
- */
-function updateAnimationDuration(duration) {
-  document.documentElement.style.setProperty(
-    "--path-animation-duration",
-    duration + "ms"
-  );
-}
-
-// 更新播放速度UI
+// 兼容旧调用
 function updateSpeedUI() {
-  const speedSelect = document.getElementById("custom-speed-select");
-  if (speedSelect) {
-    speedSelect.dataset.value = currentPlaySpeed.toString();
-    const selectText = speedSelect.querySelector(".select-text");
-    if (selectText) {
-      selectText.textContent = getSpeedLabel(currentPlaySpeed);
-    }
-  }
-}
-
-/**
- * 获取速度标签
- */
-function getSpeedLabel(speed) {
-  const speedLabels = {
-    500: "极快",
-    1000: "快速",
-    2000: "正常",
-    3000: "慢速",
-    5000: "极慢",
-  };
-  return speedLabels[speed] || `${speed}ms`;
+  updateAllSpeedUI();
 }
 
 /**
@@ -2967,18 +3239,19 @@ function initCustomSpeedSelect() {
   }
 
   function selectOption(option) {
-    const value = option.dataset.value;
+    const value = parseInt(option.dataset.value);
     const i18nKey = option.getAttribute('data-i18n');
     const text = i18nKey ? i18n.t(i18nKey) : option.textContent;
 
     selectText.textContent = text;
 
-    customSelect.dataset.value = value;
+    customSelect.dataset.value = value.toString();
 
     selectOptions.forEach((opt) => opt.classList.remove("selected"));
     option.classList.add("selected");
 
-    currentPlaySpeed = parseInt(value);
+    // 统一速度模型：直接应用速度档位
+    applySpeedPreset(value);
 
     if (isPlaying) {
       togglePlay();
@@ -3048,9 +3321,9 @@ function initCustomSpeedSelect() {
 
   customSelect.setAttribute("tabindex", "0");
 
-  const initialValue = customSelect.dataset.value || "1000";
+  // 用当前速度档位初始化选中状态
   const initialOption = customSelect.querySelector(
-    `[data-value="${initialValue}"]`
+    `[data-value="${currentSpeedLevel}"]`
   );
   if (initialOption) {
     const i18nKey = initialOption.getAttribute('data-i18n');
@@ -4051,44 +4324,38 @@ function bindEvents() {
   if (slider) {
     slider.addEventListener("mousedown", () => {
       isDragging = true;
-      console.log("开始拖动 (mousedown)");
     });
 
     slider.addEventListener("touchstart", () => {
       isDragging = true;
-      console.log("开始拖动 (touchstart)");
     });
 
     slider.addEventListener("mouseup", () => {
       if (isDragging) {
         isDragging = false;
-        console.log("结束拖动 (mouseup)");
         const finalIndex = parseInt(slider.value);
-        if (finalIndex !== currentEventIndex) {
-          showEventAtIndex(finalIndex, true, true);
-        }
+        // 松手后执行完整更新（含路径重建和镜头跟随）
+        showEventAtIndex(finalIndex, false, true);
       }
     });
 
     slider.addEventListener("touchend", () => {
       if (isDragging) {
         isDragging = false;
-        console.log("结束拖动 (touchend)");
         const finalIndex = parseInt(slider.value);
-        if (finalIndex !== currentEventIndex) {
-          showEventAtIndex(finalIndex, true, true);
-        }
+        showEventAtIndex(finalIndex, false, true);
       }
     });
 
     slider.addEventListener("input", (e) => {
       if (trajectoryData) {
         const newIndex = parseInt(e.target.value);
-        console.log(`滑块输入: ${newIndex}, 拖动状态: ${isDragging}`);
 
         if (isDragging) {
-          showEventAtIndex(newIndex, false, true);
+          // 拖动过程中只更新文字信息，不重建路径（避免卡顿和闪烁）
+          updateDragPreview(newIndex);
         } else {
+          // 非拖动（如键盘方向键触发的 input）：完整更新
           showEventAtIndex(newIndex, true, true);
         }
       }
@@ -4130,24 +4397,14 @@ function bindEvents() {
     }
   });
 
-  const speedSelect = document.getElementById("speed-select");
-  if (speedSelect) {
-    speedSelect.addEventListener("change", (e) => {
-      currentPlaySpeed = parseInt(e.target.value);
-      if (isPlaying) {
-        togglePlay();
-        setTimeout(() => togglePlay(), 100);
-      }
-    });
-  }
   initCustomSpeedSelect();
 
   const speedBtns = document.querySelectorAll(".speed-btn");
   speedBtns.forEach((btn) => {
     btn.addEventListener("click", (e) => {
-      speedBtns.forEach((b) => b.classList.remove("active"));
-      btn.classList.add("active");
-      currentPlaySpeed = parseInt(btn.dataset.speed);
+      // 统一速度模型：data-speed 现在是档位索引
+      const level = parseInt(btn.dataset.speed);
+      applySpeedPreset(level);
 
       if (isPlaying) {
         togglePlay();
@@ -4194,6 +4451,7 @@ async function initApp() {
     await initI18n();
 
     initMap();
+    initMapInteractionDetection();
 
     const motionLoaded = checkMotionPlugin();
     if (!motionLoaded) {

@@ -1,0 +1,186 @@
+name: 构建与发布
+
+on:
+  push:
+    tags:
+      - "v*"
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+env:
+  ARTIFACT_PREFIX: mao-map
+
+jobs:
+  build-check:
+    name: 构建检查 (${{ matrix.os }})
+    if: "!startsWith(github.ref, 'refs/tags/v')"
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [windows-latest, macos-14]
+
+    steps:
+      - name: 检出代码
+        uses: actions/checkout@v4
+
+      - name: 安装 Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+          cache: "npm"
+
+      - name: 安装 Rust 工具链
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Rust 缓存
+        uses: swatinem/rust-cache@v2
+        with:
+          workspaces: src-tauri -> target
+
+      - name: 安装前端依赖
+        run: npm ci
+
+      - name: 构建前端
+        run: npm run build
+
+      - name: 检查 Rust 后端 (Tauri)
+        working-directory: src-tauri
+        run: cargo check
+
+  release-bundles:
+    name: 发布打包 (${{ matrix.target_name }})
+    if: startsWith(github.ref, 'refs/tags/v')
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: windows-latest
+            target_name: windows-x64
+          - os: macos-14
+            target_name: macos-universal
+
+    env:
+      TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
+      TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
+
+    steps:
+      - name: 检出代码
+        uses: actions/checkout@v4
+
+      - name: 安装 Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+          cache: "npm"
+
+      - name: 安装 Rust 工具链
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Rust 缓存
+        uses: swatinem/rust-cache@v2
+        with:
+          workspaces: src-tauri -> target
+
+      - name: 添加 macOS Rust 目标
+        if: runner.os == 'macOS'
+        run: rustup target add aarch64-apple-darwin x86_64-apple-darwin
+
+      - name: 安装前端依赖
+        run: npm ci
+
+      - name: 构建 Tauri 安装包 (Windows)
+        if: runner.os == 'Windows'
+        run: npm run tauri -- build --bundles nsis
+
+      - name: 构建 Tauri 安装包 (macOS)
+        if: runner.os == 'macOS'
+        run: npm run tauri -- build --target universal-apple-darwin --bundles dmg
+
+      - name: 整理 Windows 产物
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          New-Item -ItemType Directory -Force -Path release-assets | Out-Null
+          $version = $env:GITHUB_REF_NAME
+          $prefix = $env:ARTIFACT_PREFIX
+
+          # NSIS 安装包
+          $nsis = Get-ChildItem -Path 'src-tauri/target' -Recurse -Include *-setup.exe -ErrorAction SilentlyContinue | Select-Object -First 1
+          if ($nsis) {
+            $nsisName = "$prefix-$version-Windows-setup.exe"
+            Copy-Item $nsis.FullName (Join-Path release-assets $nsisName)
+            if (Test-Path "$($nsis.FullName).sig") {
+              Copy-Item "$($nsis.FullName).sig" (Join-Path release-assets "$nsisName.sig")
+            }
+          }
+
+          # 便携版 zip
+          $exe = Get-ChildItem -Path 'src-tauri/target/release' -Filter *.exe -ErrorAction SilentlyContinue |
+            Where-Object { $_.Name -notmatch '-setup\.exe$' -and $_.Name -notmatch 'Uninstall' } |
+            Select-Object -First 1
+          if ($exe) {
+            $portableDir = Join-Path release-assets 'portable'
+            New-Item -ItemType Directory -Force -Path $portableDir | Out-Null
+            Copy-Item $exe.FullName $portableDir
+            Compress-Archive -Path "$portableDir\*" -DestinationPath "release-assets\$prefix-$version-Windows-Portable.zip" -Force
+            Remove-Item -Path $portableDir -Force -Recurse
+          }
+
+      - name: 整理 macOS 产物
+        if: runner.os == 'macOS'
+        shell: bash
+        run: |
+          set -euxo pipefail
+          mkdir -p release-assets
+          VERSION="${GITHUB_REF_NAME}"
+          PREFIX="${ARTIFACT_PREFIX}"
+
+          DMG=$(find src-tauri/target -name "*.dmg" | head -1 || true)
+
+          if [ -n "$DMG" ]; then
+            DMG_NAME="${PREFIX}-${VERSION}-macOS.dmg"
+            cp "$DMG" "release-assets/$DMG_NAME"
+            [ -f "$DMG.sig" ] && cp "$DMG.sig" "release-assets/$DMG_NAME.sig" || true
+          fi
+
+      - name: 上传矩阵构建产物
+        uses: actions/upload-artifact@v4
+        with:
+          name: 构建产物-${{ matrix.target_name }}
+          path: release-assets/*
+          if-no-files-found: warn
+
+  publish-release:
+    name: 发布 GitHub Release 资源
+    if: startsWith(github.ref, 'refs/tags/v')
+    runs-on: ubuntu-22.04
+    needs: release-bundles
+
+    steps:
+      - name: 下载所有构建产物
+        uses: actions/download-artifact@v4
+        with:
+          path: merged-assets
+
+      - name: 汇总产物文件
+        shell: bash
+        run: |
+          set -euxo pipefail
+          mkdir -p release-assets
+          find merged-assets -type f -maxdepth 3 -exec cp {} release-assets/ \;
+          ls -la release-assets
+
+      - name: 上传产物到 GitHub Release
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ github.ref_name }}
+          prerelease: false
+          files: release-assets/*
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}

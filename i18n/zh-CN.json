@@ -30,10 +30,10 @@
       "speedVeryFast": "很快",
       "speedVerySlow": "很慢",
       "speedOptions": {
-        "veryFast": "很快",
-        "fast": "正常",
-        "normal": "较慢",
-        "slow": "很慢"
+        "veryFast": "极快",
+        "fast": "快速",
+        "normal": "正常",
+        "slow": "慢速"
       }
     },
     "animation": {
@@ -44,12 +44,33 @@
       "cameraControl": "镜头控制",
       "cameraOn": "开启",
       "cameraOff": "关闭",
+      "followMode": "跟随模式",
+      "followModes": {
+        "smart": "智能",
+        "path": "沿路",
+        "off": "关闭"
+      },
+      "followZoom": "跟随缩放",
+      "pathSpeed": "动画时长",
       "speedLevels": {
         "fastest": "极快",
         "fast": "正常",
         "slow": "慢速",
         "slowest": "极慢"
       }
+    },
+    "settings": {
+      "title": "设置",
+      "desktopTitle": "桌面设置",
+      "alwaysOnTop": "置顶显示",
+      "launchAtStartup": "开机启动"
+    },
+    "update": {
+      "checkUpdate": "检查更新",
+      "updateAvailable": "发现新版本 v{version}",
+      "download": "前往下载",
+      "alreadyLatest": "已是最新版本",
+      "networkError": "网络不可用，请稍后再试"
     },
     "music": {
       "title": "背景音乐",

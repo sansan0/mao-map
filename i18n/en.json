@@ -31,9 +31,9 @@
       "speedVerySlow": "Very Slow",
       "speedOptions": {
         "veryFast": "Very Fast",
-        "fast": "Normal",
-        "normal": "Slower",
-        "slow": "Very Slow"
+        "fast": "Fast",
+        "normal": "Normal",
+        "slow": "Slow"
       }
     },
     "animation": {
@@ -44,12 +44,33 @@
       "cameraControl": "Camera Control",
       "cameraOn": "On",
       "cameraOff": "Off",
+      "followMode": "Follow Mode",
+      "followModes": {
+        "smart": "Smart",
+        "path": "Path",
+        "off": "Off"
+      },
+      "followZoom": "Follow Zoom",
+      "pathSpeed": "Animation Duration",
       "speedLevels": {
         "fastest": "Fastest",
         "fast": "Normal",
         "slow": "Slow",
         "slowest": "Slowest"
       }
+    },
+    "settings": {
+      "title": "Settings",
+      "desktopTitle": "Desktop Settings",
+      "alwaysOnTop": "Always on Top",
+      "launchAtStartup": "Launch at Startup"
+    },
+    "update": {
+      "checkUpdate": "Check for Updates",
+      "updateAvailable": "New version v{version} available",
+      "download": "Download",
+      "alreadyLatest": "Already up to date",
+      "networkError": "Network unavailable, try again later"
     },
     "music": {
       "title": "Background Music",

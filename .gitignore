@@ -1,3 +1,16 @@
 temp/
 .vscode/
 .claude/
+
+# Tauri / Node
+node_modules/
+dist/
+src-tauri/target/
+src-tauri/gen/
+scripts/dev.mjs
+scripts/.dev-config.json
+CLAUDE.md
+
+# Tauri signing key
+*.key
+*.key.pub

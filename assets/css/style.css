@@ -54,66 +54,285 @@ body {
 }
 
 /* ==================== PC端统计面板 ==================== */
-#stats-panel {
-    position: absolute;
-    top: 15px;
-    right: -280px;
-    background: rgba(255, 255, 255, 0.95);
-    backdrop-filter: blur(10px);
-    padding: 15px 20px;
-    border-radius: 12px 0 0 12px;
-    box-shadow: -4px 4px 20px rgba(0, 0, 0, 0.1);
-    font-size: 13px;
-    z-index: 1000;
-    width: 260px;
-    max-width: 260px;
-    transition: right 0.3s cubic-bezier(0.4, 0, 0.2, 1);
-    border: 1px solid rgba(255, 255, 255, 0.2);
-    border-right: none;
-    overflow-wrap: break-word;
-    word-wrap: break-word;
-}
-
-#stats-panel.visible {
+/* ==================== 设置按钮（右下角） ==================== */
+.settings-btn {
+    position: fixed;
+    bottom: 412px;
     right: 15px;
-}
-
-/* 统计面板内标题换行处理 */
-#stats-panel h4,
-#stats-panel h5 {
-    overflow-wrap: break-word;
-    word-wrap: break-word;
-}
-
-/* 统计面板悬停触发按钮 */
-#stats-panel::before {
-    content: "📊";
-    position: absolute;
-    left: -30px;
-    top: 50%;
-    transform: translateY(-50%);
-    width: 30px;
-    height: 60px;
-    background: rgba(255, 255, 255, 0.95);
+    width: 44px;
+    height: 44px;
+    background: rgba(149, 165, 166, 0.6);
     backdrop-filter: blur(10px);
-    border-radius: 8px 0 0 8px;
+    color: #2c3e50;
+    border: 1px solid rgba(149, 165, 166, 0.4);
+    border-radius: 50%;
+    font-size: 18px;
+    cursor: pointer;
+    box-shadow: 0 2px 12px rgba(0, 0, 0, 0.1);
+    z-index: 1001;
+    transition: all 0.3s ease;
+    touch-action: manipulation;
     display: flex;
     align-items: center;
     justify-content: center;
-    font-size: 16px;
-    box-shadow: -2px 2px 10px rgba(0, 0, 0, 0.1);
-    border: 1px solid rgba(255, 255, 255, 0.2);
-    border-right: none;
-    cursor: pointer;
 }
 
-#stats-hover-area {
+.settings-btn:hover {
+    transform: translateY(-2px) scale(1.05);
+    background: rgba(149, 165, 166, 0.45);
+    box-shadow: 0 4px 20px rgba(0, 0, 0, 0.15);
+}
+
+.settings-btn.active {
+    background: rgba(52, 152, 219, 0.6);
+    border-color: rgba(52, 152, 219, 0.4);
+    color: #fff;
+}
+
+/* ==================== 设置面板（右下角弹出） ==================== */
+.settings-panel {
+    position: fixed;
+    bottom: 462px;
+    right: 15px;
+    background: rgba(255, 255, 255, 0.95);
+    backdrop-filter: blur(15px);
+    padding: 16px 20px;
+    border-radius: 12px;
+    box-shadow: 0 8px 32px rgba(0, 0, 0, 0.15);
+    font-size: 13px;
+    z-index: 1002;
+    width: 260px;
+    border: 1px solid rgba(255, 255, 255, 0.3);
+    transform: translateY(10px);
+    opacity: 0;
+    pointer-events: none;
+    transition: transform 0.25s ease, opacity 0.25s ease;
+}
+
+.settings-panel.visible {
+    transform: translateY(0);
+    opacity: 1;
+    pointer-events: auto;
+}
+
+.settings-panel-header {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    margin-bottom: 10px;
+}
+
+.settings-panel-header h4 {
+    margin: 0;
+    color: #2c3e50;
+    font-size: 14px;
+}
+
+.settings-panel-close {
+    background: none;
+    border: none;
+    font-size: 18px;
+    color: #999;
+    cursor: pointer;
+    padding: 0 4px;
+    line-height: 1;
+}
+
+.settings-panel-close:hover {
+    color: #333;
+}
+
+.settings-divider {
+    height: 1px;
+    background: rgba(0, 0, 0, 0.08);
+    margin: 12px 0;
+}
+
+/* 镜头设置区域 */
+.camera-settings h5 {
+    margin: 0 0 10px 0;
+    color: #2c3e50;
+    font-size: 12px;
+    font-weight: 600;
+}
+
+.setting-row {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    margin: 8px 0;
+    gap: 8px;
+}
+
+.setting-row label {
+    font-size: 12px;
+    color: #666;
+    white-space: nowrap;
+    flex-shrink: 0;
+}
+
+.setting-row input[type="range"] {
+    flex: 1;
+    height: 4px;
+    min-width: 80px;
+}
+
+.setting-row .value-display {
+    font-size: 11px;
+    color: #1890ff;
+    font-weight: 600;
+    min-width: 20px;
+    text-align: right;
+}
+
+/* 跟随模式选择器 */
+.follow-mode-selector {
+    display: flex;
+    gap: 2px;
+    background: rgba(0, 0, 0, 0.04);
+    border-radius: 6px;
+    padding: 2px;
+}
+
+.follow-mode-btn {
+    padding: 3px 10px;
+    font-size: 11px;
+    border: 1px solid transparent;
+    background: transparent;
+    color: #666;
+    cursor: pointer;
+    border-radius: 4px;
+    transition: all 0.2s;
+    line-height: 1.5;
+    font-weight: 500;
+}
+
+.follow-mode-btn:hover {
+    color: #1890ff;
+    background: rgba(24, 144, 255, 0.06);
+}
+
+.follow-mode-btn.active {
+    color: #fff;
+    background: #1890ff;
+    border-color: #1890ff;
+    box-shadow: 0 1px 4px rgba(24, 144, 255, 0.3);
+}
+
+/* Tauri 桌面设置区 */
+.tauri-desktop-settings h5 {
+    margin: 0 0 10px 0;
+    color: #2c3e50;
+    font-size: 12px;
+    font-weight: 600;
+}
+
+.setting-row-center {
+    justify-content: center;
+}
+
+/* iOS 风格 toggle 开关 */
+.toggle-switch {
+    position: relative;
+    display: inline-block;
+    width: 36px;
+    height: 20px;
+    flex-shrink: 0;
+}
+
+.toggle-switch input {
+    opacity: 0;
+    width: 0;
+    height: 0;
+}
+
+.toggle-slider {
     position: absolute;
+    cursor: pointer;
     top: 0;
+    left: 0;
     right: 0;
-    width: 60px;
-    height: 200px;
-    z-index: 999;
+    bottom: 0;
+    background: #ccc;
+    border-radius: 20px;
+    transition: background 0.25s;
+}
+
+.toggle-slider::before {
+    content: "";
+    position: absolute;
+    height: 16px;
+    width: 16px;
+    left: 2px;
+    bottom: 2px;
+    background: #fff;
+    border-radius: 50%;
+    transition: transform 0.25s;
+    box-shadow: 0 1px 3px rgba(0, 0, 0, 0.2);
+}
+
+.toggle-switch input:checked + .toggle-slider {
+    background: #1890ff;
+}
+
+.toggle-switch input:checked + .toggle-slider::before {
+    transform: translateX(16px);
+}
+
+/* 检查更新按钮 */
+.check-update-btn {
+    padding: 5px 16px;
+    font-size: 12px;
+    color: #1890ff;
+    background: rgba(24, 144, 255, 0.08);
+    border: 1px solid rgba(24, 144, 255, 0.3);
+    border-radius: 6px;
+    cursor: pointer;
+    transition: all 0.2s;
+}
+
+.check-update-btn:hover {
+    background: rgba(24, 144, 255, 0.15);
+}
+
+/* 更新提示 toast */
+.update-toast {
+    position: fixed;
+    bottom: 20px;
+    left: 50%;
+    transform: translateX(-50%) translateY(80px);
+    background: rgba(255, 255, 255, 0.96);
+    backdrop-filter: blur(15px);
+    padding: 10px 20px;
+    border-radius: 8px;
+    box-shadow: 0 4px 20px rgba(0, 0, 0, 0.12);
+    font-size: 13px;
+    z-index: 10001;
+    transition: transform 0.3s ease, opacity 0.3s ease;
+    display: flex;
+    align-items: center;
+    gap: 12px;
+    border: 1px solid rgba(0, 0, 0, 0.06);
+}
+
+.update-toast.visible {
+    transform: translateX(-50%) translateY(0);
+}
+
+.update-toast.hiding {
+    opacity: 0;
+    transform: translateX(-50%) translateY(20px);
+}
+
+.update-toast-link {
+    color: #1890ff;
+    text-decoration: none;
+    font-weight: 600;
+    white-space: nowrap;
+}
+
+.update-toast-link:hover {
+    text-decoration: underline;
 }
 
 .stats-item {
@@ -1682,7 +1901,7 @@ body {
 /* ==================== 音乐播放功能样式 ==================== */
 .music-btn {
     position: fixed;
-    bottom: 370px;
+    bottom: 356px;
     right: 15px;
     width: 44px;
     height: 44px;
@@ -2283,8 +2502,9 @@ body {
     }
 
     /* 隐藏PC端元素 */
-    #stats-panel,
-    #stats-hover-area {
+    /* 移动端隐藏设置按钮和面板（空间不足） */
+    .settings-btn,
+    .settings-panel {
         display: none;
     }
 
@@ -2306,7 +2526,7 @@ body {
     }
 
     .music-btn {
-        bottom: 370px;
+        bottom: 366px;
         width: 44px;
         height: 44px;
         font-size: 16px;
@@ -2453,7 +2673,17 @@ body {
     }
 
     #timeline-control.hidden {
-        transform: translateY(100%);
+        /* 移动端折叠时只隐藏额外信息，保留核心播放控制 */
+        transform: none;
+        max-height: 110px;
+        overflow: hidden;
+        padding: 8px 15px;
+    }
+
+    #timeline-control.hidden .current-event-section,
+    #timeline-control.hidden .speed-control,
+    #timeline-control.hidden .progress-details {
+        display: none;
     }
 
     .timeline-info,
@@ -2746,7 +2976,7 @@ body {
     }
 
     .music-btn {
-        bottom: 365px;
+        bottom: 361px;
     }
 
     /* 音乐播放控制 */
@@ -2851,13 +3081,21 @@ body {
         display: flex;
     }
 
-    /* 浮动按钮位置 */
+    /* 浮动按钮位置（从下到上：反馈 → 音乐 → 设置） */
     .feedback-btn {
         bottom: 20px;
     }
 
     .music-btn {
-        bottom: 80px;
+        bottom: 76px;
+    }
+
+    .settings-btn {
+        bottom: 132px;
+    }
+
+    .settings-panel {
+        bottom: 182px;
     }
 
     /* 面板样式重置 */
