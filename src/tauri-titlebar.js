@@ -19,7 +19,7 @@
   }
 
   const invoke = TAURI.invoke;
-  const APP_VERSION = '2.0.0';
+  const APP_VERSION = '2.0.1';
   const VERSION_URL = 'https://sansan0.github.io/mao-map/version.json';
 
   // ==================== 窗口拖拽 ====================
