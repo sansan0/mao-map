@@ -2763,10 +2763,13 @@ function updateCurrentEventInfo(event) {
     "current-age": event.age,
   };
 
+  const tooltipIds = new Set(["event-title", "event-location", "event-title-mobile", "event-location-mobile"]);
+
   Object.entries(pcElements).forEach(([id, value]) => {
     const element = document.getElementById(id);
     if (element) {
       element.textContent = value;
+      if (tooltipIds.has(id)) element.title = value;
     }
   });
 
@@ -2781,6 +2784,7 @@ function updateCurrentEventInfo(event) {
     const element = document.getElementById(id);
     if (element) {
       element.textContent = value;
+      if (tooltipIds.has(id)) element.title = value;
     }
   });
 }
