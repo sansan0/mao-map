@@ -63,6 +63,8 @@ jobs:
             target_name: windows-x64
           - os: macos-14
             target_name: macos-universal
+          - os: ubuntu-latest
+            target_name: android
 
     env:
       TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
@@ -71,6 +73,21 @@ jobs:
     steps:
       - name: 检出代码
         uses: actions/checkout@v4
+
+      - name: 安装 JDK 17
+        if: matrix.target_name == 'android'
+        uses: actions/setup-java@v4
+        with:
+          distribution: 'temurin'
+          java-version: '17'
+
+      - name: 安装 Android SDK 组件
+        if: matrix.target_name == 'android'
+        shell: bash
+        run: |
+          yes | sdkmanager --licenses > /dev/null 2>&1 || true
+          sdkmanager "platforms;android-36" "build-tools;36.0.0" "ndk;27.2.12479018"
+          echo "NDK_HOME=$ANDROID_HOME/ndk/27.2.12479018" >> $GITHUB_ENV
 
       - name: 安装 Node.js
         uses: actions/setup-node@v4
@@ -90,8 +107,29 @@ jobs:
         if: runner.os == 'macOS'
         run: rustup target add aarch64-apple-darwin x86_64-apple-darwin
 
+      - name: 添加 Android Rust 目标
+        if: matrix.target_name == 'android'
+        run: rustup target add aarch64-linux-android armv7-linux-androideabi i686-linux-android x86_64-linux-android
+
       - name: 安装前端依赖
         run: npm ci
+
+      - name: 准备 Android 签名密钥
+        if: matrix.target_name == 'android'
+        env:
+          ANDROID_KEYSTORE_BASE64: ${{ secrets.ANDROID_KEYSTORE_BASE64 }}
+          ANDROID_STORE_PASSWORD: ${{ secrets.ANDROID_STORE_PASSWORD }}
+          ANDROID_KEY_ALIAS: ${{ secrets.ANDROID_KEY_ALIAS }}
+          ANDROID_KEY_PASSWORD: ${{ secrets.ANDROID_KEY_PASSWORD }}
+        shell: bash
+        run: |
+          echo "$ANDROID_KEYSTORE_BASE64" | base64 -d > src-tauri/gen/android/app/maomap-release.jks
+          cat > src-tauri/gen/android/app/keystore.properties << EOF
+          storeFile=maomap-release.jks
+          storePassword=$ANDROID_STORE_PASSWORD
+          keyAlias=$ANDROID_KEY_ALIAS
+          keyPassword=$ANDROID_KEY_PASSWORD
+          EOF
 
       - name: 构建 Tauri 安装包 (Windows)
         if: runner.os == 'Windows'
@@ -100,6 +138,10 @@ jobs:
       - name: 构建 Tauri 安装包 (macOS)
         if: runner.os == 'macOS'
         run: npm run tauri -- build --target universal-apple-darwin --bundles dmg
+
+      - name: 构建 Android APK
+        if: matrix.target_name == 'android'
+        run: npm run tauri -- android build
 
       - name: 整理 Windows 产物
         if: runner.os == 'Windows'
@@ -147,6 +189,20 @@ jobs:
             DMG_NAME="${PREFIX}-${VERSION}-macOS.dmg"
             cp "$DMG" "release-assets/$DMG_NAME"
             [ -f "$DMG.sig" ] && cp "$DMG.sig" "release-assets/$DMG_NAME.sig" || true
+          fi
+
+      - name: 整理 Android 产物
+        if: matrix.target_name == 'android'
+        shell: bash
+        run: |
+          set -euxo pipefail
+          mkdir -p release-assets
+          VERSION="${GITHUB_REF_NAME}"
+          PREFIX="${ARTIFACT_PREFIX}"
+
+          APK=$(find src-tauri/gen/android -name "*.apk" -path "*/release/*" ! -name "*-unsigned*" | head -1 || true)
+          if [ -n "$APK" ]; then
+            cp "$APK" "release-assets/${PREFIX}-${VERSION}-Android.apk"
           fi
 
       - name: 上传矩阵构建产物

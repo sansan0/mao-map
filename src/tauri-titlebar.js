@@ -1,12 +1,14 @@
 /*!
  * Tauri 桌面端窗口控制脚本
  * 处理自定义标题栏、托盘事件、桌面设置面板、自动更新检查
+ * Android 端：隐藏标题栏和桌面设置，保留更新检查和语言切换
  */
 
 (function () {
   'use strict';
 
   const TAURI = window.__TAURI_INTERNALS__;
+  const IS_ANDROID = /android/i.test(navigator.userAgent);
 
   // 非 Tauri 环境（浏览器调试）：隐藏标题栏
   if (!TAURI) {
@@ -19,8 +21,173 @@
   }
 
   const invoke = TAURI.invoke;
-  const APP_VERSION = '2.1.0';
-  const VERSION_URL = 'https://sansan0.github.io/mao-map/version.json';
+  const APP_VERSION = '2.2.0';
+
+  const VERSION_SOURCES = [
+    'https://sansan0.github.io/mao-map/version.json',
+    'https://fastly.jsdelivr.net/gh/sansan0/mao-map@master/version.json',
+    'https://cdn.jsdelivr.net/gh/sansan0/mao-map@master/version.json',
+    'https://gcore.jsdelivr.net/gh/sansan0/mao-map@master/version.json',
+  ];
+  let lastOkSourceIndex = 0;
+
+  // ==================== 自动更新检查 ====================
+
+  function compareVersions(a, b) {
+    const pa = a.split('.').map(Number);
+    const pb = b.split('.').map(Number);
+    for (let i = 0; i < 3; i++) {
+      if ((pa[i] || 0) < (pb[i] || 0)) return -1;
+      if ((pa[i] || 0) > (pb[i] || 0)) return 1;
+    }
+    return 0;
+  }
+
+  async function fetchVersionJson() {
+    const n = VERSION_SOURCES.length;
+    for (let offset = 0; offset < n; offset++) {
+      const idx = (lastOkSourceIndex + offset) % n;
+      const url = VERSION_SOURCES[idx] + '?t=' + Date.now();
+      try {
+        let data;
+        if (IS_ANDROID) {
+          const base64 = await Promise.race([
+            invoke('proxy_fetch', { url }),
+            new Promise((_, reject) => setTimeout(() => reject(new Error('timeout')), 5000)),
+          ]);
+          data = JSON.parse(atob(base64));
+        } else {
+          const ctrl = new AbortController();
+          const timer = setTimeout(() => ctrl.abort(), 5000);
+          const res = await fetch(url, { signal: ctrl.signal });
+          clearTimeout(timer);
+          if (!res.ok) throw new Error(`HTTP ${res.status}`);
+          data = await res.json();
+        }
+        if (idx !== lastOkSourceIndex) {
+          const host = new URL(VERSION_SOURCES[idx]).hostname;
+          console.log(`[Update] switched to: ${host}`);
+        }
+        lastOkSourceIndex = idx;
+        return data;
+      } catch { /* try next source */ }
+    }
+    throw new Error('all sources unavailable');
+  }
+
+  function showToast(message, linkText, linkUrl, duration) {
+    document.querySelector('.update-toast')?.remove();
+
+    const toast = document.createElement('div');
+    toast.className = 'update-toast';
+    toast.innerHTML = `<span>${message}</span>`;
+    if (linkText && linkUrl) {
+      const link = document.createElement('a');
+      link.className = 'update-toast-link';
+      link.textContent = linkText;
+      link.href = '#';
+      link.addEventListener('click', (e) => {
+        e.preventDefault();
+        invoke('plugin:opener|open_url', { url: linkUrl }).catch(() => {});
+      });
+      toast.appendChild(document.createTextNode(' '));
+      toast.appendChild(link);
+    }
+    document.body.appendChild(toast);
+
+    requestAnimationFrame(() => {
+      requestAnimationFrame(() => toast.classList.add('visible'));
+    });
+
+    setTimeout(() => {
+      toast.classList.remove('visible');
+      toast.classList.add('hiding');
+      setTimeout(() => toast.remove(), 400);
+    }, duration || 5000);
+  }
+
+  async function checkForUpdate(manual) {
+    try {
+      const data = await fetchVersionJson();
+
+      if (compareVersions(APP_VERSION, data.version) < 0) {
+        const msg = (typeof i18n !== 'undefined' ? i18n.t('ui.update.updateAvailable') : '').replace('{version}', data.version)
+          || `New version v${data.version} available`;
+        const linkText = typeof i18n !== 'undefined' ? i18n.t('ui.update.download') : 'Download';
+        showToast(msg, linkText, data.url, 8000);
+      } else if (manual) {
+        const msg = typeof i18n !== 'undefined' ? i18n.t('ui.update.alreadyLatest') : 'Already up to date';
+        showToast(msg, null, null, 3000);
+      }
+    } catch (e) {
+      if (manual) {
+        const msg = typeof i18n !== 'undefined' ? i18n.t('ui.update.networkError') : 'Network unavailable';
+        showToast(msg, null, null, 3000);
+      }
+    }
+  }
+
+  window.checkForUpdate = checkForUpdate;
+
+  // ==================== Android 适配 ====================
+  // 标题栏/托盘/置顶/自启在 Android 无意义，仅保留更新检查与多语言。
+  // 设置承载为底部抽屉（复用 #settings-panel，形态由 tauri.css 的 body.android 声明）。
+  // 仅做必要的元素归位与事件绑定，不再 DOM 搬移 + !important 打补丁。
+
+  if (IS_ANDROID) {
+    document.body.classList.add('android');
+
+    const init = () => {
+      const panel = document.getElementById('settings-panel');
+
+      // 1) 语言选择器从（隐藏的）标题栏移入设置抽屉
+      const langSelector = document.getElementById('language-selector');
+      if (langSelector && panel) {
+        langSelector.classList.remove('titlebar-lang');
+        const header = panel.querySelector('.settings-panel-header');
+        if (header && header.after) header.after(langSelector);
+        else panel.insertBefore(langSelector, panel.firstChild);
+      }
+
+      // 2) 设置入口图标改为菜单(☰)，与 toggle 面板按钮(⚙)区分
+      const settingsBtn = document.getElementById('settings-btn');
+      if (settingsBtn) settingsBtn.textContent = '☰';
+
+      // 3) 检查更新移入镜头控制区末尾（抽屉可见→入口可达，修复原先不可达）
+      const checkUpdateBtn = document.getElementById('check-update-btn');
+      const cameraSettings = document.querySelector('.camera-settings');
+      if (checkUpdateBtn && cameraSettings) {
+        const row = checkUpdateBtn.closest('.setting-row');
+        if (row) { row.style.display = ''; cameraSettings.appendChild(row); }
+        checkUpdateBtn.addEventListener('click', () => checkForUpdate(true));
+      }
+
+      // 4) 反馈收进抽屉：新增一行，点击复用既有反馈弹窗
+      const feedbackBtn = document.getElementById('feedback-btn');
+      if (feedbackBtn && panel) {
+        const label = (typeof i18n !== 'undefined' && i18n.t('ui.feedback.title')) || '意见反馈';
+        const row = document.createElement('div');
+        row.className = 'sheet-feedback-row';
+        row.innerHTML = '<span data-i18n="ui.feedback.title">' + label + '</span>'
+          + '<span class="sheet-feedback-arrow">›</span>';
+        row.addEventListener('click', () => feedbackBtn.click());
+        panel.appendChild(row);
+      }
+
+      // 5) 启动后静默检查更新
+      setTimeout(() => checkForUpdate(false), 3000);
+    };
+
+    if (document.readyState === 'loading') {
+      document.addEventListener('DOMContentLoaded', init);
+    } else {
+      init();
+    }
+
+    return;
+  }
+
+  // ==================== 以下为桌面端专属逻辑 ====================
 
   // ==================== 窗口拖拽 ====================
 
@@ -114,101 +281,25 @@
   }
 
   function setupTrayEvents() {
-    // 托盘 → 置顶变更
     listenEvent('topmost-changed', (checked) => {
       window.dispatchEvent(new CustomEvent('tauri-topmost-changed', { detail: checked }));
       const toggle = document.getElementById('topmost-toggle');
       if (toggle) toggle.checked = checked;
     });
 
-    // 托盘 → 开机启动变更
     listenEvent('autostart-changed', (checked) => {
       const toggle = document.getElementById('autostart-toggle');
       if (toggle) toggle.checked = checked;
     });
 
-    // 托盘 → 检查更新
     listenEvent('check-update', () => {
       checkForUpdate(true);
     });
   }
 
-  // ==================== 自动更新检查 ====================
-
-  function compareVersions(a, b) {
-    const pa = a.split('.').map(Number);
-    const pb = b.split('.').map(Number);
-    for (let i = 0; i < 3; i++) {
-      if ((pa[i] || 0) < (pb[i] || 0)) return -1;
-      if ((pa[i] || 0) > (pb[i] || 0)) return 1;
-    }
-    return 0;
-  }
-
-  function showToast(message, linkText, linkUrl, duration) {
-    // 移除已有 toast
-    document.querySelector('.update-toast')?.remove();
-
-    const toast = document.createElement('div');
-    toast.className = 'update-toast';
-    toast.innerHTML = `<span>${message}</span>`;
-    if (linkText && linkUrl) {
-      const link = document.createElement('a');
-      link.className = 'update-toast-link';
-      link.textContent = linkText;
-      link.href = '#';
-      link.addEventListener('click', (e) => {
-        e.preventDefault();
-        invoke('plugin:opener|open_url', { url: linkUrl }).catch(() => {});
-      });
-      toast.appendChild(document.createTextNode(' '));
-      toast.appendChild(link);
-    }
-    document.body.appendChild(toast);
-
-    requestAnimationFrame(() => {
-      requestAnimationFrame(() => toast.classList.add('visible'));
-    });
-
-    setTimeout(() => {
-      toast.classList.remove('visible');
-      toast.classList.add('hiding');
-      setTimeout(() => toast.remove(), 400);
-    }, duration || 5000);
-  }
-
-  async function checkForUpdate(manual) {
-    try {
-      const ctrl = new AbortController();
-      setTimeout(() => ctrl.abort(), 5000);
-      const res = await fetch(VERSION_URL + '?t=' + Date.now(), { signal: ctrl.signal });
-      const data = await res.json();
-
-      if (compareVersions(APP_VERSION, data.version) < 0) {
-        const msg = (typeof i18n !== 'undefined' ? i18n.t('ui.update.updateAvailable') : '').replace('{version}', data.version)
-          || `New version v${data.version} available`;
-        const linkText = typeof i18n !== 'undefined' ? i18n.t('ui.update.download') : 'Download';
-        showToast(msg, linkText, data.url, 8000);
-      } else if (manual) {
-        const msg = typeof i18n !== 'undefined' ? i18n.t('ui.update.alreadyLatest') : 'Already up to date';
-        showToast(msg, null, null, 3000);
-      }
-    } catch (e) {
-      if (manual) {
-        const msg = typeof i18n !== 'undefined' ? i18n.t('ui.update.networkError') : 'Network unavailable';
-        showToast(msg, null, null, 3000);
-      }
-      // 非手动触发：完全静默
-    }
-  }
-
-  // 暴露给设置面板按钮
-  window.checkForUpdate = checkForUpdate;
-
   // ==================== 桌面设置面板 ====================
 
   function initDesktopSettings() {
-    // 显示 Tauri 专属设置区
     document.querySelectorAll('.tauri-only-settings').forEach(el => {
       el.style.display = '';
     });
@@ -217,7 +308,6 @@
     const autostartToggle = document.getElementById('autostart-toggle');
     const checkUpdateBtn = document.getElementById('check-update-btn');
 
-    // 加载初始状态
     invoke('load_settings').then(settings => {
       if (topmostToggle) topmostToggle.checked = settings.topmost || false;
     }).catch(() => {});
@@ -226,7 +316,6 @@
       if (autostartToggle) autostartToggle.checked = enabled;
     }).catch(() => {});
 
-    // 置顶切换
     if (topmostToggle) {
       topmostToggle.addEventListener('change', () => {
         invoke('set_topmost', { topmost: topmostToggle.checked }).catch(() => {
@@ -235,7 +324,6 @@
       });
     }
 
-    // 开机启动切换
     if (autostartToggle) {
       autostartToggle.addEventListener('change', async () => {
         const want = autostartToggle.checked;
@@ -246,13 +334,11 @@
             await invoke('plugin:autostart|disable');
           }
         } catch (e) {
-          // 回滚
           autostartToggle.checked = !want;
         }
       });
     }
 
-    // 检查更新按钮
     if (checkUpdateBtn) {
       checkUpdateBtn.addEventListener('click', () => checkForUpdate(true));
     }
@@ -265,8 +351,6 @@
     setupI18nSync();
     setupTrayEvents();
     initDesktopSettings();
-
-    // 启动后 3 秒静默检查更新
     setTimeout(() => checkForUpdate(false), 3000);
   }
 

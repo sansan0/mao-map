@@ -2664,7 +2664,8 @@ body {
         width: 100%;
         border-radius: 0;
         transform: none;
-        transition: transform 0.3s ease, background 0.8s ease;
+        transition: transform 0.3s cubic-bezier(0.25, 0.46, 0.45, 0.94), background 0.8s ease;
+        padding-bottom: var(--safe-area-inset-bottom, 20px);
     }
 
 
@@ -2673,18 +2674,10 @@ body {
     }
 
     #timeline-control.hidden {
-        /* 移动端折叠时只隐藏额外信息，保留核心播放控制 */
-        transform: none;
-        max-height: 110px;
-        overflow: hidden;
-        padding: 8px 15px;
+        transform: translateY(calc(100% + 60px));
+        pointer-events: none;
     }
 
-    #timeline-control.hidden .current-event-section,
-    #timeline-control.hidden .speed-control,
-    #timeline-control.hidden .progress-details {
-        display: none;
-    }
 
     .timeline-info,
     .current-event-details {

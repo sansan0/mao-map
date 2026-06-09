@@ -13,6 +13,7 @@ English | [中文](README.md)
 [![GitHub Pages](https://img.shields.io/badge/GitHub_Pages-Live_Demo-4285F4?style=flat-square&logo=github&logoColor=white)](https://sansan0.github.io/mao-map)
 [![Windows](https://img.shields.io/badge/Windows-Download-0078D4?style=flat-square&logo=windows&logoColor=white)](https://github.com/sansan0/mao-map/releases/latest)
 [![macOS](https://img.shields.io/badge/macOS-Download-000000?style=flat-square&logo=apple&logoColor=white)](https://github.com/sansan0/mao-map/releases/latest)
+[![Android](https://img.shields.io/badge/Android-APK_Download-3DDC84?style=flat-square&logo=android&logoColor=white)](https://github.com/sansan0/mao-map/releases/latest)
 
 </div>
 
@@ -22,7 +23,7 @@ This project visualizes the life journey of Chairman Mao Zedong from 1893 to 197
 
 **Live Demo: [https://sansan0.github.io/mao-map/](https://sansan0.github.io/mao-map/)**
 
-**Desktop Download: [GitHub Releases](https://github.com/sansan0/mao-map/releases/latest)** (Windows Installer / macOS DMG)
+**Download: [GitHub Releases](https://github.com/sansan0/mao-map/releases/latest)** (Windows Installer / macOS DMG / Android APK)
 
 <p align="center">
   <img src="docs/images/image.png" alt="Screenshot" />
@@ -46,14 +47,15 @@ This project visualizes the life journey of Chairman Mao Zedong from 1893 to 197
 - **Live Stats**: Movement count, provinces visited, international travel and more
 - **Progress Tracking**: Current event index, age, and playback progress
 
-### 🖥️ Desktop Client
+### 🖥️ Desktop & Mobile Client
 
-Built with Tauri v2, available for Windows and macOS:
+Built with Tauri v2, available for Windows, macOS and Android:
 
-- **System Tray**: Window minimizes to tray on close; right-click menu with always-on-top and launch-at-startup options
+- **System Tray** (Desktop): Window minimizes to tray on close; right-click menu with always-on-top and launch-at-startup options
 - **Smart Camera Follow**: Three modes — Smart (distance-adaptive), Path (smooth route following), Off
 - **Unified Speed Control**: Single speed setting controls playback, path animation, and camera follow simultaneously
 - **Persistent Settings**: Language, always-on-top, autostart preferences saved automatically
+- **Native Android Support**: Install APK directly, optimized for touch interaction
 
 ### Keyboard Shortcuts (Desktop/PC)
 

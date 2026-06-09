@@ -1,4 +1,4 @@
-/* ==================== Tauri 桌面端适配样式 ==================== */
+/* ==================== Tauri 适配样式 ==================== */
 /* 设计语言：与主页面一致 - 白色/毛玻璃/蓝色(#1890ff)主调 */
 
 /* ==================== 自定义标题栏 ==================== */
@@ -22,7 +22,6 @@
   z-index: 10000;
 }
 
-/* 左侧：标题 - 固定宽度，防止语言切换时中间区域偏移 */
 .titlebar-left {
   display: flex;
   align-items: center;
@@ -40,7 +39,6 @@
   letter-spacing: 0.3px;
 }
 
-/* 中间：语言切换 - flex:1 占满剩余空间，内容居中 */
 .titlebar-center {
   flex: 1;
   display: flex;
@@ -49,7 +47,6 @@
   min-width: 0;
 }
 
-/* 右侧：窗口控制按钮 - 固定宽度，与左侧对称 */
 .titlebar-controls {
   display: flex;
   align-items: center;
@@ -157,17 +154,6 @@ body {
   display: none !important;
 }
 
-/* ==================== fixed 定位元素偏移修正 ==================== */
-/* 这些元素在原始 CSS 中使用 position:fixed，需要补偿标题栏高度 */
-
-/* 设置面板（右下角，不需要额外偏移） */
-
-/* 时间轴控制（原始用 bottom 定位，不需要修改） */
-
-/* 反馈按钮 & 音乐按钮（原始用 bottom + right 的 fixed 定位）
-   这些按钮的 bottom 值无需修改——它们相对视口底部定位，
-   标题栏在顶部，不影响底部空间 */
-
 /* ==================== 桌面端优化 ==================== */
 @media (min-width: 769px) {
   .toggle-panel-btn {
@@ -183,7 +169,6 @@ body {
   }
 }
 
-/* 反馈弹窗桌面端适配 */
 .feedback-modal {
   max-width: 380px;
 }
@@ -205,4 +190,157 @@ body {
 
 ::-webkit-scrollbar-thumb:hover {
   background: rgba(0, 0, 0, 0.25);
+}
+/* ==================== Android 适配 ==================== */
+/*
+ * edge-to-edge：MainActivity 已 enableEdgeToEdge()，WebView 铺到状态栏/手势条下方，
+ * 交互元素一律用 env(safe-area-inset-*) 避让系统栏（旧 WebView<136 回退 0，不报错）。
+ * 设置承载：复用 #settings-panel，Android 形态化为底部抽屉（Bottom Sheet），与音乐/反馈
+ * 弹窗的移动端形态保持一致（沿用用户已熟悉的交互，降低学习成本）。
+ * 形态差异全部由本段声明，不再依赖 JS 搬 DOM + !important 打补丁。
+ */
+
+body.android {
+  --mm-safe-top: env(safe-area-inset-top, 0px);
+  --mm-safe-bottom: env(safe-area-inset-bottom, 0px);
+  --mm-timeline-h: 240px; /* 与 style.css 移动端 calc(100vh - 240px) 对应 */
+  padding-top: 0 !important;
+}
+
+body.android #titlebar {
+  display: none !important;
+}
+
+body.android #container,
+body.android #map {
+  height: 100dvh !important;
+}
+
+/* 地图缩放控件避开顶部状态栏 */
+body.android .leaflet-top {
+  margin-top: var(--mm-safe-top);
+}
+
+/* 始终采用移动端布局（不受横屏 >768px 断点影响） */
+body.android .toggle-panel-btn,
+body.android .speed-control {
+  display: flex !important;
+}
+body.android .current-event-section {
+  display: block !important;
+}
+body.android .player-speed,
+body.android .custom-select-wrapper,
+body.android .current-event-details,
+body.android .progress-details {
+  display: none !important;
+}
+
+/* ---------- 右下浮动按钮：基于时间轴高度 + 安全区堆叠（取代硬编码魔法数字） ---------- */
+body.android .toggle-panel-btn {
+  bottom: calc(var(--mm-timeline-h) + 20px + var(--mm-safe-bottom));
+}
+body.android .settings-btn {
+  display: flex !important;
+  bottom: calc(var(--mm-timeline-h) + 76px + var(--mm-safe-bottom));
+}
+body.android .music-btn {
+  bottom: calc(var(--mm-timeline-h) + 132px + var(--mm-safe-bottom));
+}
+/* 反馈收进设置抽屉，不再浮动 */
+body.android .feedback-btn {
+  display: none !important;
+}
+
+/* 时间轴避让底部手势条 */
+body.android #timeline-control {
+  bottom: calc(20px + var(--mm-safe-bottom)) !important;
+}
+
+/* ---------- 设置抽屉（Bottom Sheet）：复用 #settings-panel ---------- */
+body.android #settings-panel {
+  display: block !important;
+  position: fixed;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  top: auto;
+  width: 100%;
+  max-width: none;
+  max-height: 85vh;
+  overflow-y: auto;
+  border-radius: 16px 16px 0 0;
+  padding: 8px 20px calc(20px + var(--mm-safe-bottom));
+  transform: translateY(110%);
+  opacity: 1;
+  pointer-events: none;
+  transition: transform 0.3s cubic-bezier(0.25, 0.46, 0.45, 0.94);
+}
+body.android #settings-panel.visible {
+  transform: translateY(0);
+  pointer-events: auto;
+}
+/* 抽屉抓手 */
+body.android #settings-panel::before {
+  content: "";
+  display: block;
+  width: 40px;
+  height: 4px;
+  margin: 4px auto 12px;
+  border-radius: 2px;
+  background: rgba(0, 0, 0, 0.18);
+}
+
+/* Android 不适用的桌面项（置顶/开机启动）整组隐藏；检查更新按钮由 JS 移入镜头控制区 */
+body.android .tauri-desktop-settings,
+body.android .tauri-only-settings {
+  display: none !important;
+}
+
+/* 语言切换收进抽屉（由 JS 移入 #settings-panel） */
+body.android #settings-panel .language-selector {
+  display: flex !important;
+  flex-direction: row !important;
+  gap: 8px;
+  margin: 0 0 14px;
+}
+body.android #settings-panel .lang-btn {
+  flex: 1;
+  width: auto !important;
+  padding: 9px 0 !important;
+  font-size: 14px !important;
+  text-align: center;
+  border: 1px solid rgba(0, 0, 0, 0.12);
+  border-radius: 8px;
+  background: rgba(255, 255, 255, 0.7);
+  color: #5a6c7d;
+  cursor: pointer;
+}
+body.android #settings-panel .lang-btn.active {
+  background: #1890ff;
+  border-color: #1890ff;
+  color: #fff;
+}
+
+/* 抽屉内"意见反馈"入口（由 JS 注入） */
+body.android .sheet-feedback-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-top: 14px;
+  padding: 12px 4px 2px;
+  border-top: 1px solid rgba(0, 0, 0, 0.08);
+  color: #5a6c7d;
+  font-size: 14px;
+  cursor: pointer;
+}
+body.android .sheet-feedback-row .sheet-feedback-arrow {
+  color: #bbb;
+  font-size: 18px;
+}
+
+/* 移动端弹窗底部安全区避让 */
+body.android .music-modal,
+body.android .feedback-modal {
+  padding-bottom: var(--mm-safe-bottom);
 }

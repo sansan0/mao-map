@@ -234,7 +234,7 @@ function toggleControlPanel() {
     isPanelVisible = false;
   } else {
     panel.classList.remove("hidden");
-    toggleBtn.textContent = "⚙";
+    toggleBtn.textContent = "⬇";
     mapEl.classList.remove("panel-hidden");
     mapEl.classList.add("panel-visible");
     isPanelVisible = true;
@@ -3356,7 +3356,7 @@ const MUSIC_PLAYLIST = [
     artist: "经典革命歌曲",
     duration: "04:55",
     urls: [
-      // 第二个是维基百科的公共版权音乐
+      "data/music/Internationale-cmn_(英特纳雄耐尔).ogg",
       "https://raw.githubusercontent.com/sansan0/mao-map/refs/heads/master/data/music/Internationale-cmn_(英特纳雄耐尔).ogg",
       "https://upload.wikimedia.org/wikipedia/commons/5/5b/Internationale-cmn_%28%E8%8B%B1%E7%89%B9%E7%BA%B3%E9%9B%84%E8%80%90%E5%B0%94%29.ogg",
     ],
@@ -3367,6 +3367,7 @@ const MUSIC_PLAYLIST = [
     artist: "经典红色歌曲",
     duration: "02:25",
     urls: [
+      "data/music/东方红_-_The_East_Is_Red_(1950).ogg",
       "https://raw.githubusercontent.com/sansan0/mao-map/refs/heads/master/data/music/东方红_-_The_East_Is_Red_(1950).ogg",
       "https://upload.wikimedia.org/wikipedia/commons/d/d8/%E4%B8%9C%E6%96%B9%E7%BA%A2_-_The_East_Is_Red_%281950%29.ogg",
     ],
@@ -3514,7 +3515,7 @@ function loadMusicAudio(song, autoPlay = false) {
       const loadTimeoutId = setTimeout(() => {
         console.warn("音频加载超时:", url);
         handleLoadError();
-      }, 8000);
+      }, 15000);
 
       const cleanup = () => {
         clearTimeout(loadTimeoutId);
@@ -3546,17 +3547,41 @@ function loadMusicAudio(song, autoPlay = false) {
         tryLoadUrl().then(resolve);
       };
 
-      musicAudio.addEventListener("canplaythrough", handleLoadSuccess, {
-        once: true,
-      });
-      musicAudio.addEventListener("loadedmetadata", handleLoadSuccess, {
-        once: true,
-      });
-      musicAudio.addEventListener("error", handleLoadError, { once: true });
+      const loadBlob = (blobOrUrl) => {
+          const blobUrl = (blobOrUrl instanceof Blob)
+            ? URL.createObjectURL(blobOrUrl)
+            : blobOrUrl;
+          musicAudio.addEventListener("canplaythrough", handleLoadSuccess, {
+            once: true,
+          });
+          musicAudio.addEventListener("loadedmetadata", handleLoadSuccess, {
+            once: true,
+          });
+          musicAudio.addEventListener("error", handleLoadError, { once: true });
+          musicAudio.src = blobUrl;
+          musicAudio.volume = musicVolume;
+          musicAudio.load();
+      };
 
-      musicAudio.src = url;
-      musicAudio.volume = musicVolume;
-      musicAudio.load();
+      // 本地文件（相对路径）直接加载，外部 URL 在 Android 上走 proxy_fetch
+      const isLocalUrl = !url.startsWith('http://') && !url.startsWith('https://');
+      const IS_ANDROID = /android/i.test(navigator.userAgent);
+
+      if (isLocalUrl || !(IS_ANDROID && window.__TAURI_INTERNALS__)) {
+        loadBlob(url);
+      } else {
+        window.__TAURI_INTERNALS__.invoke('proxy_fetch', { url })
+          .then((base64Data) => {
+            const binary = atob(base64Data);
+            const bytes = new Uint8Array(binary.length);
+            for (let i = 0; i < binary.length; i++) bytes[i] = binary.charCodeAt(i);
+            loadBlob(new Blob([bytes], { type: 'audio/ogg' }));
+          })
+          .catch((e) => {
+            console.warn("proxy_fetch 失败:", url, e);
+            handleLoadError();
+          });
+      }
     });
   }
 

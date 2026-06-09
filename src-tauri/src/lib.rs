@@ -1,14 +1,17 @@
 mod settings;
 
+#[cfg(not(target_os = "android"))]
 use tauri::{
     image::Image,
     menu::{CheckMenuItem, Menu, MenuItem, PredefinedMenuItem},
     tray::{MouseButton, MouseButtonState, TrayIconBuilder},
     Emitter, Manager, WindowEvent,
 };
+
+#[cfg(not(target_os = "android"))]
 use tauri_plugin_autostart::ManagerExt;
 
-/// 托盘菜单项引用，用于运行时更新文本
+#[cfg(not(target_os = "android"))]
 struct TrayMenuState {
     show: MenuItem<tauri::Wry>,
     topmost: CheckMenuItem<tauri::Wry>,
@@ -17,6 +20,7 @@ struct TrayMenuState {
     quit: MenuItem<tauri::Wry>,
 }
 
+#[cfg(not(target_os = "android"))]
 fn tray_text(lang: &str, key: &str) -> &'static str {
     match (lang, key) {
         ("en", "show") => "Show Window",
@@ -33,6 +37,7 @@ fn tray_text(lang: &str, key: &str) -> &'static str {
     }
 }
 
+#[cfg(not(target_os = "android"))]
 fn show_main_window(app: &tauri::AppHandle) {
     if let Some(w) = app.get_webview_window("main") {
         let _ = w.show();
@@ -43,6 +48,7 @@ fn show_main_window(app: &tauri::AppHandle) {
 
 // ==================== Tauri Commands ====================
 
+#[cfg(not(target_os = "android"))]
 #[tauri::command]
 fn update_tray_language(app: tauri::AppHandle, language: String) {
     let lang = if language.starts_with("en") { "en" } else { "zh" };
@@ -55,6 +61,7 @@ fn update_tray_language(app: tauri::AppHandle, language: String) {
     }
 }
 
+#[cfg(not(target_os = "android"))]
 #[tauri::command]
 fn set_topmost(app: tauri::AppHandle, topmost: bool) {
     if let Some(w) = app.get_webview_window("main") {
@@ -80,14 +87,60 @@ fn get_config_dir() -> Result<String, String> {
     settings::get_config_dir().map(|p| p.to_string_lossy().to_string())
 }
 
+#[cfg(not(target_os = "android"))]
 #[tauri::command]
 fn is_startup_launch() -> bool {
     std::env::args().any(|a| a == "--startup")
 }
 
+#[tauri::command]
+async fn proxy_fetch(url: String) -> Result<String, String> {
+    use base64::Engine;
+    let client = reqwest::Client::builder()
+        .timeout(std::time::Duration::from_secs(30))
+        .build()
+        .map_err(|e| format!("HTTP 客户端创建失败: {e}"))?;
+    let resp = client
+        .get(&url)
+        .send()
+        .await
+        .map_err(|e| format!("请求失败: {e}"))?;
+    if !resp.status().is_success() {
+        return Err(format!("HTTP {}", resp.status()));
+    }
+    let bytes = resp.bytes().await.map_err(|e| format!("读取失败: {e}"))?;
+    Ok(base64::engine::general_purpose::STANDARD.encode(&bytes))
+}
+
 // ==================== App Entry ====================
 
+
+#[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
+    let builder = tauri::Builder::default().plugin(tauri_plugin_opener::init());
+
+    // 桌面端（Windows/macOS/Linux）：托盘、自启、置顶、关闭到托盘
+    #[cfg(not(target_os = "android"))]
+    let builder = setup_desktop(builder);
+
+    // Android：仅注册跨平台命令（无托盘/窗口管理概念）
+    #[cfg(target_os = "android")]
+    let builder = builder.invoke_handler(tauri::generate_handler![
+        load_settings,
+        save_settings,
+        get_config_dir,
+        proxy_fetch,
+    ]);
+
+    builder
+        .run(tauri::generate_context!())
+        .expect("error while running tauri application");
+}
+
+/// 桌面端初始化：托盘菜单、开机自启、窗口置顶、关闭隐藏到托盘等。
+/// Android 无这些概念，故整体置于本函数并以 cfg 排除，使 run() 保持精简。
+#[cfg(not(target_os = "android"))]
+fn setup_desktop(builder: tauri::Builder<tauri::Wry>) -> tauri::Builder<tauri::Wry> {
     // 早期加载设置（窗口创建前）
     let saved = settings::load_settings().unwrap_or_default();
     let is_startup = std::env::args().any(|a| a == "--startup");
@@ -95,12 +148,11 @@ pub fn run() {
     let init_lang = if saved.language.starts_with("en") { "en" } else { "zh" };
     let init_topmost = saved.topmost;
 
-    tauri::Builder::default()
+    builder
         .plugin(tauri_plugin_autostart::init(
             tauri_plugin_autostart::MacosLauncher::LaunchAgent,
             Some(vec!["--startup"]),
         ))
-        .plugin(tauri_plugin_opener::init())
         .invoke_handler(tauri::generate_handler![
             update_tray_language,
             set_topmost,
@@ -108,13 +160,12 @@ pub fn run() {
             save_settings,
             get_config_dir,
             is_startup_launch,
+            proxy_fetch,
         ])
         .setup(move |app| {
-            // 托盘菜单
             let show = MenuItem::with_id(app, "show", tray_text(init_lang, "show"), true, None::<&str>)?;
             let topmost = CheckMenuItem::with_id(app, "topmost", tray_text(init_lang, "topmost"), true, init_topmost, None::<&str>)?;
 
-            // 检查 OS 自启动状态
             let autostart_enabled = app.autolaunch().is_enabled().unwrap_or(false);
             let autostart = CheckMenuItem::with_id(app, "autostart", tray_text(init_lang, "autostart"), true, autostart_enabled, None::<&str>)?;
 
@@ -185,20 +236,17 @@ pub fn run() {
 
             app.manage(TrayMenuState { show, topmost, autostart, check_update, quit });
 
-            // 设置窗口图标（任务栏高清图标）
             if let Some(w) = app.get_webview_window("main") {
                 let win_icon = Image::from_bytes(include_bytes!("../icons/icon.png"))?;
                 let _ = w.set_icon(win_icon);
             }
 
-            // 应用初始置顶状态
             if init_topmost {
                 if let Some(w) = app.get_webview_window("main") {
                     let _ = w.set_always_on_top(true);
                 }
             }
 
-            // 开机启动时隐藏窗口
             if should_hide {
                 if let Some(w) = app.get_webview_window("main") {
                     let _ = w.hide();
@@ -208,12 +256,9 @@ pub fn run() {
             Ok(())
         })
         .on_window_event(|window, event| {
-            // 关闭按钮 → 隐藏到托盘
             if let WindowEvent::CloseRequested { api, .. } = event {
                 api.prevent_close();
                 let _ = window.hide();
             }
         })
-        .run(tauri::generate_context!())
-        .expect("error while running tauri application");
 }

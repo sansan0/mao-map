@@ -13,6 +13,7 @@
 [![GitHub Pages](https://img.shields.io/badge/GitHub_Pages-在线访问-4285F4?style=flat-square&logo=github&logoColor=white)](https://sansan0.github.io/mao-map)
 [![Windows 桌面版](https://img.shields.io/badge/Windows-桌面版下载-0078D4?style=flat-square&logo=windows&logoColor=white)](https://github.com/sansan0/mao-map/releases/latest)
 [![macOS 桌面版](https://img.shields.io/badge/macOS-桌面版下载-000000?style=flat-square&logo=apple&logoColor=white)](https://github.com/sansan0/mao-map/releases/latest)
+[![Android](https://img.shields.io/badge/Android-APK下载-3DDC84?style=flat-square&logo=android&logoColor=white)](https://github.com/sansan0/mao-map/releases/latest)
 
 </div>
 
@@ -22,7 +23,7 @@
 
 **在线体验：[https://sansan0.github.io/mao-map/](https://sansan0.github.io/mao-map/)**
 
-**桌面版下载：[GitHub Releases](https://github.com/sansan0/mao-map/releases/latest)**（Windows 安装包 / macOS DMG）
+**客户端下载：[GitHub Releases](https://github.com/sansan0/mao-map/releases/latest)**（Windows 安装包 / macOS DMG / Android APK）
 
 <p align="center">
   <img src="docs/images/image.png" alt="电脑效果" />
@@ -47,14 +48,15 @@
 - **进度追踪**：实时显示当前播放进度、年龄、事件序号等信息
 - **可视化图表**：直观展示历史轨迹的统计信息
 
-### 🖥️ 桌面客户端
+### 🖥️ 桌面 & 移动客户端
 
-基于 Tauri v2 构建，支持 Windows 和 macOS：
+基于 Tauri v2 构建，支持 Windows、macOS 和 Android：
 
-- **系统托盘**：关闭窗口自动收入托盘，右键菜单支持置顶显示、开机启动
+- **系统托盘**（桌面端）：关闭窗口自动收入托盘，右键菜单支持置顶显示、开机启动
 - **智能镜头跟随**：三种模式可选 —— 智能（距离自适应）、沿路（缓缓跟随路径）、关闭
 - **统一速度控制**：单一速度档位同时控制播放、路径动画和镜头跟随
 - **设置持久化**：语言、置顶、开机启动等偏好自动保存
+- **Android 原生支持**：直接安装 APK，触屏交互优化
 
 ### PC 端快捷键
 

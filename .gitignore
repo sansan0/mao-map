@@ -6,11 +6,28 @@ temp/
 node_modules/
 dist/
 src-tauri/target/
-src-tauri/gen/
+
+# Tauri 生成目录：纳入 Android 原生定制（MainActivity/Manifest/gradle/res 等），
+# 仅忽略构建产物、本机配置与签名密钥
+src-tauri/gen/schemas/
+src-tauri/gen/apple/
+src-tauri/gen/android/build/
+src-tauri/gen/android/app/build/
+src-tauri/gen/android/.gradle/
+src-tauri/gen/android/.tauri/
+src-tauri/gen/android/local.properties
+
+# Android NDK linker 配置含本机绝对路径，应由各开发者本地生成（见 CONTRIBUTING）
+src-tauri/.cargo/
+
 scripts/dev.mjs
 scripts/.dev-config.json
 CLAUDE.md
 
-# Tauri signing key
+# 签名密钥与敏感配置（务必不提交）
 *.key
 *.key.pub
+*.jks
+*.keystore
+keystore.properties
+key.properties
