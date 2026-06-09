@@ -81,11 +81,14 @@ jobs:
           distribution: 'temurin'
           java-version: '17'
 
+      - name: 安装 Android SDK
+        if: matrix.target_name == 'android'
+        uses: android-actions/setup-android@v3
+
       - name: 安装 Android SDK 组件
         if: matrix.target_name == 'android'
         shell: bash
         run: |
-          yes | sdkmanager --licenses > /dev/null 2>&1 || true
           sdkmanager "platforms;android-36" "build-tools;36.0.0" "ndk;27.2.12479018"
           echo "NDK_HOME=$ANDROID_HOME/ndk/27.2.12479018" >> $GITHUB_ENV
 
