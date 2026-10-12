@@ -26,7 +26,15 @@ This project visualizes the life journey of Chairman Mao Zedong from 1893 to 197
 **Download: [GitHub Releases](https://github.com/sansan0/mao-map/releases/latest)** (Windows Installer / macOS DMG / Android APK)
 
 <p align="center">
-  <img src="docs/images/image.png" alt="Screenshot" />
+  <img src="docs/images/desktop-playback.webp" alt="Desktop playback: map, current event, and timeline" />
+  <br />
+  <sub>Desktop playback mode</sub>
+</p>
+
+<p align="center">
+  <img src="docs/images/mobile-browse.webp" alt="Mobile browse mode: journey map and playback controls" width="320" />
+  <br />
+  <sub>Mobile browse mode</sub>
 </p>
 
 ## 🎯 Features

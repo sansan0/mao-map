@@ -125,6 +125,7 @@ class I18n {
         el.textContent = this.t(key, variables);
       }
     });
+    document.dispatchEvent(new CustomEvent('journey:locale-change', { detail: { locale: this.locale } }));
   }
 
   /**

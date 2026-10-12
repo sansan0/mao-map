@@ -9,19 +9,19 @@
 
   const TAURI = window.__TAURI_INTERNALS__;
   const IS_ANDROID = /android/i.test(navigator.userAgent);
+  const titlebar = document.getElementById('titlebar');
 
-  // 非 Tauri 环境（浏览器调试）：隐藏标题栏
+  document.body.classList.toggle('tauri-desktop', Boolean(TAURI) && !IS_ANDROID);
+  document.body.classList.toggle('android', Boolean(TAURI) && IS_ANDROID);
+  if (titlebar) titlebar.hidden = !TAURI || IS_ANDROID;
+
+  // 普通浏览器使用共享页面布局，不添加原生窗口的高度偏移。
   if (!TAURI) {
-    const titlebar = document.getElementById('titlebar');
-    if (titlebar) {
-      titlebar.style.display = 'none';
-      document.body.style.paddingTop = '0';
-    }
     return;
   }
 
   const invoke = TAURI.invoke;
-  const APP_VERSION = '2.2.0';
+  const APP_VERSION = '2.3.0';
 
   const VERSION_SOURCES = [
     'https://sansan0.github.io/mao-map/version.json',
@@ -30,6 +30,7 @@
     'https://gcore.jsdelivr.net/gh/sansan0/mao-map@master/version.json',
   ];
   let lastOkSourceIndex = 0;
+  let pendingUpdateCheck = null;
 
   // ==================== 自动更新检查 ====================
 
@@ -48,19 +49,21 @@
     for (let offset = 0; offset < n; offset++) {
       const idx = (lastOkSourceIndex + offset) % n;
       const url = VERSION_SOURCES[idx] + '?t=' + Date.now();
+      let timer;
       try {
         let data;
         if (IS_ANDROID) {
           const base64 = await Promise.race([
             invoke('proxy_fetch', { url }),
-            new Promise((_, reject) => setTimeout(() => reject(new Error('timeout')), 5000)),
+            new Promise((_, reject) => {
+              timer = setTimeout(() => reject(new Error('timeout')), 5000);
+            }),
           ]);
           data = JSON.parse(atob(base64));
         } else {
           const ctrl = new AbortController();
-          const timer = setTimeout(() => ctrl.abort(), 5000);
+          timer = setTimeout(() => ctrl.abort(), 5000);
           const res = await fetch(url, { signal: ctrl.signal });
-          clearTimeout(timer);
           if (!res.ok) throw new Error(`HTTP ${res.status}`);
           data = await res.json();
         }
@@ -71,6 +74,7 @@
         lastOkSourceIndex = idx;
         return data;
       } catch { /* try next source */ }
+      finally { clearTimeout(timer); }
     }
     throw new Error('all sources unavailable');
   }
@@ -80,7 +84,12 @@
 
     const toast = document.createElement('div');
     toast.className = 'update-toast';
-    toast.innerHTML = `<span>${message}</span>`;
+    toast.setAttribute('role', 'status');
+    toast.setAttribute('aria-live', 'polite');
+    toast.setAttribute('aria-atomic', 'true');
+    const messageEl = document.createElement('span');
+    messageEl.textContent = message;
+    toast.appendChild(messageEl);
     if (linkText && linkUrl) {
       const link = document.createElement('a');
       link.className = 'update-toast-link';
@@ -99,16 +108,34 @@
       requestAnimationFrame(() => toast.classList.add('visible'));
     });
 
-    setTimeout(() => {
+    const dismissToast = () => {
+      if (!toast.isConnected) return;
+      // 键盘用户正在访问下载链接时，不移除其焦点目标。
+      if (toast.contains(document.activeElement)) {
+        setTimeout(dismissToast, 1000);
+        return;
+      }
       toast.classList.remove('visible');
       toast.classList.add('hiding');
       setTimeout(() => toast.remove(), 400);
-    }, duration || 5000);
+    };
+    setTimeout(dismissToast, duration || 5000);
   }
 
   async function checkForUpdate(manual) {
+    const button = manual ? document.getElementById('check-update-btn') : null;
+    if (button?.disabled) return;
+    if (button) {
+      button.disabled = true;
+      button.setAttribute('aria-busy', 'true');
+    }
     try {
-      const data = await fetchVersionJson();
+      if (!pendingUpdateCheck) {
+        pendingUpdateCheck = fetchVersionJson().finally(() => {
+          pendingUpdateCheck = null;
+        });
+      }
+      const data = await pendingUpdateCheck;
 
       if (compareVersions(APP_VERSION, data.version) < 0) {
         const msg = (typeof i18n !== 'undefined' ? i18n.t('ui.update.updateAvailable') : '').replace('{version}', data.version)
@@ -124,6 +151,11 @@
         const msg = typeof i18n !== 'undefined' ? i18n.t('ui.update.networkError') : 'Network unavailable';
         showToast(msg, null, null, 3000);
       }
+    } finally {
+      if (button) {
+        button.disabled = false;
+        button.removeAttribute('aria-busy');
+      }
     }
   }
 
@@ -131,29 +163,28 @@
 
   // ==================== Android 适配 ====================
   // 标题栏/托盘/置顶/自启在 Android 无意义，仅保留更新检查与多语言。
-  // 设置承载为底部抽屉（复用 #settings-panel，形态由 tauri.css 的 body.android 声明）。
-  // 仅做必要的元素归位与事件绑定，不再 DOM 搬移 + !important 打补丁。
+  // 设置复用 #settings-panel；其余导航和操作与网页共享。
 
   if (IS_ANDROID) {
-    document.body.classList.add('android');
-
     const init = () => {
       const panel = document.getElementById('settings-panel');
 
-      // 1) 语言选择器从（隐藏的）标题栏移入设置抽屉
+      // 语言入口从页面顶栏归入设置，不创建第二份选择器。
       const langSelector = document.getElementById('language-selector');
       if (langSelector && panel) {
         langSelector.classList.remove('titlebar-lang');
-        const header = panel.querySelector('.settings-panel-header');
-        if (header && header.after) header.after(langSelector);
-        else panel.insertBefore(langSelector, panel.firstChild);
+        const languageSection = document.getElementById('settings-language');
+        if (languageSection) {
+          if (langSelector.parentElement !== languageSection) languageSection.appendChild(langSelector);
+          languageSection.hidden = false;
+        } else {
+          const header = panel.querySelector('.settings-panel-header');
+          if (header && header.after) header.after(langSelector);
+          else panel.insertBefore(langSelector, panel.firstChild);
+        }
       }
 
-      // 2) 设置入口图标改为菜单(☰)，与 toggle 面板按钮(⚙)区分
-      const settingsBtn = document.getElementById('settings-btn');
-      if (settingsBtn) settingsBtn.textContent = '☰';
-
-      // 3) 检查更新移入镜头控制区末尾（抽屉可见→入口可达，修复原先不可达）
+      // 检查更新不随桌面专用设置隐藏。
       const checkUpdateBtn = document.getElementById('check-update-btn');
       const cameraSettings = document.querySelector('.camera-settings');
       if (checkUpdateBtn && cameraSettings) {
@@ -162,19 +193,6 @@
         checkUpdateBtn.addEventListener('click', () => checkForUpdate(true));
       }
 
-      // 4) 反馈收进抽屉：新增一行，点击复用既有反馈弹窗
-      const feedbackBtn = document.getElementById('feedback-btn');
-      if (feedbackBtn && panel) {
-        const label = (typeof i18n !== 'undefined' && i18n.t('ui.feedback.title')) || '意见反馈';
-        const row = document.createElement('div');
-        row.className = 'sheet-feedback-row';
-        row.innerHTML = '<span data-i18n="ui.feedback.title">' + label + '</span>'
-          + '<span class="sheet-feedback-arrow">›</span>';
-        row.addEventListener('click', () => feedbackBtn.click());
-        panel.appendChild(row);
-      }
-
-      // 5) 启动后静默检查更新
       setTimeout(() => checkForUpdate(false), 3000);
     };
 
@@ -191,12 +209,10 @@
 
   // ==================== 窗口拖拽 ====================
 
-  const titlebar = document.getElementById('titlebar');
   if (titlebar) {
     titlebar.addEventListener('mousedown', (e) => {
-      if (e.target.closest('.titlebar-controls') ||
-          e.target.closest('.titlebar-lang') ||
-          e.target.closest('button')) {
+      if (e.button !== 0 || e.defaultPrevented ||
+          e.target.closest('button, a, input, select, textarea, [contenteditable="true"]')) {
         return;
       }
       invoke('plugin:window|start_dragging', {
@@ -205,9 +221,8 @@
     });
 
     titlebar.addEventListener('dblclick', (e) => {
-      if (e.target.closest('.titlebar-controls') ||
-          e.target.closest('.titlebar-lang') ||
-          e.target.closest('button')) {
+      if (e.defaultPrevented ||
+          e.target.closest('button, a, input, select, textarea, [contenteditable="true"]')) {
         return;
       }
       toggleMaximize();
@@ -230,18 +245,58 @@
     }
   }
 
-  const SVG_MAXIMIZE = '<svg width="10" height="10" viewBox="0 0 10 10"><rect fill="none" stroke="currentColor" stroke-width="1" x="0.5" y="0.5" width="9" height="9"/></svg>';
-  const SVG_RESTORE = '<svg width="10" height="10" viewBox="0 0 10 10"><rect fill="none" stroke="currentColor" stroke-width="1" x="2.5" y="0.5" width="7" height="7"/><rect fill="none" stroke="currentColor" stroke-width="1" x="0.5" y="2.5" width="7" height="7"/></svg>';
+  let windowMaximized = false;
+
+  function renderWindowControlIcon(id, name) {
+    const button = document.getElementById(id);
+    if (button && window.JourneyIcons?.svg) {
+      button.innerHTML = window.JourneyIcons.svg(name);
+    }
+  }
+
+  function updateWindowControlLabels() {
+    const english = typeof i18n !== 'undefined' && i18n.locale === 'en';
+    const labels = {
+      'titlebar-minimize': english ? 'Minimize' : '最小化',
+      'titlebar-maximize': windowMaximized
+        ? (english ? 'Restore window' : '还原窗口')
+        : (english ? 'Maximize' : '最大化'),
+      'titlebar-close': english ? 'Hide to tray' : '隐藏到托盘',
+    };
+    Object.entries(labels).forEach(([id, label]) => {
+      const button = document.getElementById(id);
+      if (!button) return;
+      button.type = 'button';
+      button.title = label;
+      button.setAttribute('aria-label', label);
+      button.querySelectorAll('svg').forEach(svg => {
+        svg.setAttribute('aria-hidden', 'true');
+        svg.setAttribute('focusable', 'false');
+      });
+    });
+    const controls = document.querySelector('.titlebar-controls');
+    if (controls) {
+      controls.setAttribute('role', 'group');
+      controls.setAttribute('aria-label', english ? 'Window controls' : '窗口控制');
+    }
+  }
 
   async function updateMaximizeIcon() {
     try {
       const maximized = await invoke('plugin:window|is_maximized', { label: 'main' });
-      const btn = document.getElementById('titlebar-maximize');
-      if (btn) btn.innerHTML = maximized ? SVG_RESTORE : SVG_MAXIMIZE;
+      windowMaximized = maximized;
+      renderWindowControlIcon('titlebar-maximize', maximized ? 'copy' : 'square');
+      updateWindowControlLabels();
     } catch (e) { /* ignore */ }
   }
 
   function initControls() {
+    renderWindowControlIcon('titlebar-minimize', 'minus');
+    renderWindowControlIcon('titlebar-maximize', 'square');
+    renderWindowControlIcon('titlebar-close', 'x');
+    updateWindowControlLabels();
+    updateMaximizeIcon();
+
     document.getElementById('titlebar-minimize')?.addEventListener('click', () => {
       invoke('plugin:window|minimize', { label: 'main' }).catch(() => {});
     });
@@ -252,7 +307,11 @@
       invoke('plugin:window|hide', { label: 'main' }).catch(() => {});
     });
 
-    window.addEventListener('resize', () => setTimeout(updateMaximizeIcon, 50));
+    let resizeTimer;
+    window.addEventListener('resize', () => {
+      clearTimeout(resizeTimer);
+      resizeTimer = setTimeout(updateMaximizeIcon, 50);
+    });
   }
 
   // ==================== i18n 标题 + 托盘语言同步 ====================
@@ -263,9 +322,11 @@
     const originalSetLocale = i18n.setLocale.bind(i18n);
     i18n.setLocale = async function (locale) {
       const result = await originalSetLocale(locale);
+      if (result === false) return result;
       const titleEl = document.querySelector('.titlebar-title');
       if (titleEl) titleEl.textContent = i18n.t('meta.title');
-      invoke('update_tray_language', { language: locale }).catch(() => {});
+      updateWindowControlLabels();
+      invoke('update_tray_language', { language: i18n.locale }).catch(() => {});
       return result;
     };
   }
@@ -308,33 +369,44 @@
     const autostartToggle = document.getElementById('autostart-toggle');
     const checkUpdateBtn = document.getElementById('check-update-btn');
 
+    if (topmostToggle) topmostToggle.disabled = true;
     invoke('load_settings').then(settings => {
-      if (topmostToggle) topmostToggle.checked = settings.topmost || false;
-    }).catch(() => {});
+      if (topmostToggle) topmostToggle.checked = settings.topmost === true;
+    }).catch(() => {}).finally(() => {
+      if (topmostToggle) topmostToggle.disabled = false;
+    });
 
+    if (autostartToggle) autostartToggle.disabled = true;
     invoke('plugin:autostart|is_enabled').then(enabled => {
-      if (autostartToggle) autostartToggle.checked = enabled;
-    }).catch(() => {});
+      if (autostartToggle) autostartToggle.checked = enabled === true;
+    }).catch(() => {}).finally(() => {
+      if (autostartToggle) autostartToggle.disabled = false;
+    });
 
     if (topmostToggle) {
-      topmostToggle.addEventListener('change', () => {
-        invoke('set_topmost', { topmost: topmostToggle.checked }).catch(() => {
-          topmostToggle.checked = !topmostToggle.checked;
-        });
+      topmostToggle.addEventListener('change', async () => {
+        const want = topmostToggle.checked;
+        topmostToggle.disabled = true;
+        try {
+          await invoke('set_topmost', { topmost: want });
+        } catch (e) {
+          topmostToggle.checked = !want;
+        } finally {
+          topmostToggle.disabled = false;
+        }
       });
     }
 
     if (autostartToggle) {
       autostartToggle.addEventListener('change', async () => {
         const want = autostartToggle.checked;
+        autostartToggle.disabled = true;
         try {
-          if (want) {
-            await invoke('plugin:autostart|enable');
-          } else {
-            await invoke('plugin:autostart|disable');
-          }
+          await invoke('set_autostart', { enabled: want });
         } catch (e) {
           autostartToggle.checked = !want;
+        } finally {
+          autostartToggle.disabled = false;
         }
       });
     }

@@ -1,17 +1,22 @@
 {
   "name": "mao-map",
-  "version": "2.2.0",
+  "version": "2.3.0",
   "private": true,
   "type": "module",
   "scripts": {
     "dev": "vite",
     "build": "node scripts/build.js",
+    "check:version": "node scripts/check-version.mjs",
+    "test": "node --test scripts/ui.test.mjs",
+    "icons:sync": "node scripts/sync-icons.mjs",
     "tauri": "tauri",
     "tauri:dev": "node scripts/dev.mjs",
     "tauri:build": "tauri build"
   },
   "devDependencies": {
     "@tauri-apps/cli": "^2.9.0",
+    "jsdom": "^26.1.0",
+    "lucide-static": "1.55.0",
     "vite": "^6.0.0"
   }
 }

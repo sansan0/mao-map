@@ -1,0 +1,85 @@
+/* Shared controls use the same material and accent tokens in both skins. */
+.select-control { display: inline-flex; min-width: 0; max-width: 100%; }
+.select-trigger {
+  display: inline-flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  width: 100%;
+  min-width: 0;
+  min-height: 40px;
+  padding: 8px 11px;
+  border: 1px solid var(--color-line);
+  border-radius: 9px;
+  background: var(--control-surface);
+  color: var(--color-ink);
+  box-shadow: 0 1px 3px rgb(0 0 0 / 4%);
+  font-size: 12px;
+  text-align: left;
+}
+.select-trigger:hover:not(:disabled), .select-trigger[aria-expanded="true"] { border-color: var(--color-accent-border); background: var(--popover-surface); }
+.select-trigger[aria-expanded="true"] { color: var(--color-accent-ink); }
+.select-value { min-width: 0; overflow: hidden; white-space: nowrap; text-overflow: ellipsis; }
+.select-chevron { display: inline-flex; align-items: center; justify-content: center; width: 14px; height: 14px; flex: 0 0 14px; color: var(--color-muted); transition: transform .16s; }
+.select-chevron .icon, .select-option-check .icon { width: 14px; height: 14px; }
+.select-trigger[aria-expanded="true"] .select-chevron { transform: rotate(180deg); color: var(--color-accent-ink); }
+.select-popup {
+  position: fixed;
+  z-index: 1500;
+  box-sizing: border-box;
+  min-width: 120px;
+  margin: 0;
+  padding: 5px;
+  overflow-x: hidden;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  scrollbar-width: thin;
+  border: 1px solid var(--color-accent-border);
+  border-radius: 11px;
+  color: var(--color-ink);
+  box-shadow: 0 8px 28px rgb(30 35 40 / 14%), inset 0 1px var(--surface-edge);
+  font-size: 12px;
+  animation: select-appear .14s ease-out;
+}
+.select-option { display: flex; align-items: center; gap: 8px; min-width: 0; min-height: 40px; padding: 8px 9px; border-radius: 6px; cursor: pointer; line-height: 1.55; white-space: nowrap; overflow: hidden; }
+.select-option-label { flex: 1 1 auto; min-width: 0; overflow: hidden; white-space: nowrap; text-overflow: ellipsis; }
+.select-option-check { display: inline-flex; align-items: center; justify-content: center; width: 14px; height: 14px; flex: 0 0 14px; color: var(--color-accent-ink); opacity: 0; }
+.select-option[aria-selected="true"] { color: var(--color-accent-ink); font-weight: 600; }
+.select-option[aria-selected="true"] .select-option-check { opacity: 1; }
+.select-option.is-active { background: var(--color-accent-soft); }
+.select-option[aria-disabled="true"] { opacity: .4; cursor: not-allowed; }
+.period-filter .select-control { flex: 1; width: 0; }
+.period-filter .select-trigger { min-height: 36px; padding-block: 5px; }
+.playback-speed .select-control { flex: 0 0 auto; max-width: min(144px, 30vw); }
+/* Speed is a secondary text action; only its options need a separate surface. */
+.playback-speed .select-trigger { justify-content: center; width: auto; min-width: 44px; max-width: 100%; min-height: 40px; padding: 7px 8px; gap: 4px; border: 0; background: transparent; box-shadow: none; }
+.playback-speed .select-trigger:hover:not(:disabled), .playback-speed .select-trigger[aria-expanded="true"] { background: transparent; color: var(--color-accent-ink); }
+.playback-speed .select-chevron { width: 12px; height: 12px; flex-basis: 12px; }
+.playback-speed .select-chevron .icon { width: 12px; height: 12px; }
+body.compact .playback-speed .select-trigger { padding: 0 6px; }
+.appearance-settings .select-control { width: min(210px, 65%); }
+
+/* Range tracks are drawn explicitly; native dark rails do not match either skin. */
+input[type="range"] { -webkit-tap-highlight-color: transparent; }
+input[type="range"]:not(#timeline-slider) { --range-progress: 0%; appearance: none; -webkit-appearance: none; height: 28px; margin: 0; padding: 0; background: transparent; border: 0; cursor: pointer; touch-action: pan-y; }
+input[type="range"]:not(#timeline-slider)::-webkit-slider-runnable-track { height: 4px; border-radius: 6px; background: linear-gradient(to right, var(--color-accent) var(--range-progress), var(--color-track) var(--range-progress)); }
+input[type="range"]:not(#timeline-slider)::-moz-range-track { height: 4px; border-radius: 6px; background: var(--color-track); }
+input[type="range"]:not(#timeline-slider)::-moz-range-progress { height: 4px; border-radius: 6px; background: var(--color-accent); }
+input[type="range"]:not(#timeline-slider)::-webkit-slider-thumb { appearance: none; -webkit-appearance: none; width: 14px; height: 14px; margin-top: -5px; border: 3px solid var(--color-surface); border-radius: 50%; background: var(--color-accent); box-shadow: 0 0 0 1px var(--color-accent-border), 0 2px 5px rgb(0 0 0 / 12%); }
+input[type="range"]:not(#timeline-slider)::-moz-range-thumb { box-sizing: border-box; width: 14px; height: 14px; border: 3px solid var(--color-surface); border-radius: 50%; background: var(--color-accent); box-shadow: 0 0 0 1px var(--color-accent-border), 0 2px 5px rgb(0 0 0 / 12%); }
+input[type="range"]:disabled { opacity: .4; cursor: not-allowed; }
+
+/* Pointer clicks use the control's subtle border; keyboard navigation keeps a visible ring. */
+:focus:not(:focus-visible), body[data-input-mode="pointer"] :focus { outline: none; }
+.surface-dialog:focus, .journey-sidebar:focus { outline: none; }
+body[data-input-mode="pointer"] .toggle-switch input:focus + .toggle-slider { outline: none; }
+body[data-input-mode="keyboard"] .search-field:focus-within { outline: 2px solid var(--color-accent-ink); outline-offset: 2px; }
+@keyframes select-appear { from { opacity: 0; } to { opacity: 1; } }
+@media (prefers-reduced-motion: reduce) {
+  .select-popup { animation: none; }
+  .select-chevron { transition: none; }
+}
+@supports not ((backdrop-filter: blur(1px)) or (-webkit-backdrop-filter: blur(1px))) {
+  /* An opaque tint is the shared fallback when the renderer cannot blur behind text. */
+  body { --floating-surface: rgb(var(--glass-tint)); }
+}

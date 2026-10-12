@@ -15,6 +15,9 @@ pub struct AppSettings {
     pub hide_to_tray_on_startup: bool,
     #[serde(default)]
     pub topmost: bool,
+    // 更新单个偏好时保留其他版本或原生扩展写入的窗口等配置。
+    #[serde(flatten)]
+    pub additional: serde_json::Map<String, serde_json::Value>,
 }
 
 impl Default for AppSettings {
@@ -24,6 +27,7 @@ impl Default for AppSettings {
             launch_at_startup: false,
             hide_to_tray_on_startup: false,
             topmost: false,
+            additional: serde_json::Map::new(),
         }
     }
 }

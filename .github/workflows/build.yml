@@ -33,6 +33,9 @@ jobs:
           node-version: "20"
           cache: "npm"
 
+      - name: 校验应用版本
+        run: npm run check:version
+
       - name: 安装 Rust 工具链
         uses: dtolnay/rust-toolchain@stable
 
@@ -43,6 +46,10 @@ jobs:
 
       - name: 安装前端依赖
         run: npm ci
+
+      - name: 验证共享界面交互
+        if: runner.os == 'Windows'
+        run: npm test
 
       - name: 构建前端
         run: npm run build
@@ -98,6 +105,9 @@ jobs:
           node-version: "20"
           cache: "npm"
 
+      - name: 校验应用版本与发布标签
+        run: npm run check:version
+
       - name: 安装 Rust 工具链
         uses: dtolnay/rust-toolchain@stable
 
@@ -117,6 +127,10 @@ jobs:
       - name: 安装前端依赖
         run: npm ci
 
+      - name: 验证共享界面交互
+        if: runner.os == 'Windows'
+        run: npm test
+
       - name: 准备 Android 签名密钥
         if: matrix.target_name == 'android'
         env:
@@ -126,7 +140,14 @@ jobs:
           ANDROID_KEY_PASSWORD: ${{ secrets.ANDROID_KEY_PASSWORD }}
         shell: bash
         run: |
-          echo "$ANDROID_KEYSTORE_BASE64" | base64 -d > src-tauri/gen/android/app/maomap-release.jks
+          set -euo pipefail
+          for name in ANDROID_KEYSTORE_BASE64 ANDROID_STORE_PASSWORD ANDROID_KEY_ALIAS ANDROID_KEY_PASSWORD; do
+            if [ -z "${!name}" ]; then
+              echo "::error::Missing Android signing secret: $name"
+              exit 1
+            fi
+          done
+          printf '%s' "$ANDROID_KEYSTORE_BASE64" | base64 -d > src-tauri/gen/android/app/maomap-release.jks
           cat > src-tauri/gen/android/app/keystore.properties << EOF
           storeFile=maomap-release.jks
           storePassword=$ANDROID_STORE_PASSWORD
@@ -144,7 +165,7 @@ jobs:
 
       - name: 构建 Android APK
         if: matrix.target_name == 'android'
-        run: npm run tauri -- android build
+        run: npm run tauri -- android build --apk --ci
 
       - name: 整理 Windows 产物
         if: runner.os == 'Windows'
@@ -154,28 +175,21 @@ jobs:
           New-Item -ItemType Directory -Force -Path release-assets | Out-Null
           $version = $env:GITHUB_REF_NAME
           $prefix = $env:ARTIFACT_PREFIX
+          $appVersion = (Get-Content package.json -Raw | ConvertFrom-Json).version
 
           # NSIS 安装包
-          $nsis = Get-ChildItem -Path 'src-tauri/target' -Recurse -Include *-setup.exe -ErrorAction SilentlyContinue | Select-Object -First 1
-          if ($nsis) {
-            $nsisName = "$prefix-$version-Windows-setup.exe"
-            Copy-Item $nsis.FullName (Join-Path release-assets $nsisName)
-            if (Test-Path "$($nsis.FullName).sig") {
-              Copy-Item "$($nsis.FullName).sig" (Join-Path release-assets "$nsisName.sig")
-            }
+          $nsis = @(Get-ChildItem -Path 'src-tauri/target/release/bundle/nsis' -Filter "*_${appVersion}_x64-setup.exe" -File)
+          if ($nsis.Count -ne 1) { throw "Expected one Windows installer for $appVersion, found $($nsis.Count)" }
+          $nsisName = "$prefix-$version-Windows-setup.exe"
+          Copy-Item -LiteralPath $nsis[0].FullName -Destination (Join-Path release-assets $nsisName)
+          if (Test-Path -LiteralPath "$($nsis[0].FullName).sig") {
+            Copy-Item -LiteralPath "$($nsis[0].FullName).sig" -Destination (Join-Path release-assets "$nsisName.sig")
           }
 
           # 便携版 zip
-          $exe = Get-ChildItem -Path 'src-tauri/target/release' -Filter *.exe -ErrorAction SilentlyContinue |
-            Where-Object { $_.Name -notmatch '-setup\.exe$' -and $_.Name -notmatch 'Uninstall' } |
-            Select-Object -First 1
-          if ($exe) {
-            $portableDir = Join-Path release-assets 'portable'
-            New-Item -ItemType Directory -Force -Path $portableDir | Out-Null
-            Copy-Item $exe.FullName $portableDir
-            Compress-Archive -Path "$portableDir\*" -DestinationPath "release-assets\$prefix-$version-Windows-Portable.zip" -Force
-            Remove-Item -Path $portableDir -Force -Recurse
-          }
+          $exe = 'src-tauri/target/release/mao-map.exe'
+          if (-not (Test-Path -LiteralPath $exe -PathType Leaf)) { throw 'Windows application executable is missing' }
+          Compress-Archive -LiteralPath $exe -DestinationPath "release-assets\$prefix-$version-Windows-Portable.zip" -Force
 
       - name: 整理 macOS 产物
         if: runner.os == 'macOS'
@@ -185,14 +199,15 @@ jobs:
           mkdir -p release-assets
           VERSION="${GITHUB_REF_NAME}"
           PREFIX="${ARTIFACT_PREFIX}"
+          APP_VERSION=$(node -p "require('./package.json').version")
 
-          DMG=$(find src-tauri/target -name "*.dmg" | head -1 || true)
-
-          if [ -n "$DMG" ]; then
-            DMG_NAME="${PREFIX}-${VERSION}-macOS.dmg"
-            cp "$DMG" "release-assets/$DMG_NAME"
-            [ -f "$DMG.sig" ] && cp "$DMG.sig" "release-assets/$DMG_NAME.sig" || true
-          fi
+          shopt -s nullglob
+          DMGS=(src-tauri/target/universal-apple-darwin/release/bundle/dmg/*_"${APP_VERSION}"_universal.dmg)
+          [ "${#DMGS[@]}" -eq 1 ] || { echo "Expected one macOS installer for ${APP_VERSION}"; exit 1; }
+          DMG="${DMGS[0]}"
+          DMG_NAME="${PREFIX}-${VERSION}-macOS.dmg"
+          cp "$DMG" "release-assets/$DMG_NAME"
+          [ -f "$DMG.sig" ] && cp "$DMG.sig" "release-assets/$DMG_NAME.sig" || true
 
       - name: 整理 Android 产物
         if: matrix.target_name == 'android'
@@ -203,17 +218,17 @@ jobs:
           VERSION="${GITHUB_REF_NAME}"
           PREFIX="${ARTIFACT_PREFIX}"
 
-          APK=$(find src-tauri/gen/android -name "*.apk" -path "*/release/*" ! -name "*-unsigned*" | head -1 || true)
-          if [ -n "$APK" ]; then
-            cp "$APK" "release-assets/${PREFIX}-${VERSION}-Android.apk"
-          fi
+          APK="src-tauri/gen/android/app/build/outputs/apk/universal/release/app-universal-release.apk"
+          test -s "$APK"
+          "$ANDROID_HOME/build-tools/36.0.0/apksigner" verify "$APK"
+          cp "$APK" "release-assets/${PREFIX}-${VERSION}-Android.apk"
 
       - name: 上传矩阵构建产物
         uses: actions/upload-artifact@v4
         with:
           name: 构建产物-${{ matrix.target_name }}
           path: release-assets/*
-          if-no-files-found: warn
+          if-no-files-found: error
 
   publish-release:
     name: 发布 GitHub Release 资源
@@ -232,7 +247,10 @@ jobs:
         run: |
           set -euxo pipefail
           mkdir -p release-assets
-          find merged-assets -type f -maxdepth 3 -exec cp {} release-assets/ \;
+          find merged-assets -maxdepth 3 -type f -exec cp {} release-assets/ \;
+          for suffix in Windows-setup.exe Windows-Portable.zip macOS.dmg Android.apk; do
+            test -s "release-assets/${ARTIFACT_PREFIX}-${GITHUB_REF_NAME}-${suffix}"
+          done
           ls -la release-assets
 
       - name: 上传产物到 GitHub Release
@@ -241,5 +259,6 @@ jobs:
           tag_name: ${{ github.ref_name }}
           prerelease: false
           files: release-assets/*
+          fail_on_unmatched_files: true
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}

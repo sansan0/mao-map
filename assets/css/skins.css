@@ -1,0 +1,213 @@
+/*
+ * 可选皮肤只覆盖视觉。布局、控件尺寸与显隐仍由共享样式负责。
+ * classic 依据原版的白色毛玻璃、系统中文字体与蓝色控件；
+ * paper 直接沿用共享默认变量，不复制一套组件或布局规则。
+ */
+body[data-skin="classic"] {
+  --glass-tint: 255 255 255;
+  --color-paper: #f5f7fa;
+  --color-surface: #fff;
+  --color-ink: #333;
+  --color-muted: #7f8c8d;
+  --color-line: rgba(0, 0, 0, .08);
+  --color-accent: #1890ff;
+  --color-accent-ink: #0968b9;
+  --accent-tint: 52 152 219;
+  --color-accent-border: rgba(52, 152, 219, .25);
+  --color-accent-hover: #2980b9;
+  --color-track: rgba(127, 140, 141, .2);
+  --color-route: #c0392b;
+  --color-history: #85c1e9;
+  --route-tint: 231 76 60;
+  --shadow: 0 2px 12px rgba(0, 0, 0, .1);
+  --shadow-dialog: 0 0 24px rgba(0, 0, 0, .1), 0 6px 18px rgba(0, 0, 0, .08);
+  --shadow-drawer: 12px 0 24px -16px rgba(0, 0, 0, .22);
+  --inset-tint: 52 152 219;
+  --surface-edge: rgba(255, 255, 255, .7);
+  --play-gradient: linear-gradient(135deg, #3498db, #2980b9);
+  --font-ui: "Microsoft YaHei", "PingFang SC", -apple-system, BlinkMacSystemFont, "Segoe UI", Arial, sans-serif;
+  --font-book: var(--font-ui);
+}
+
+/* 原版没有书籍衬线数字或印章处理；保留同一个产品标记与信息结构。 */
+body[data-skin="classic"] :is(.player-position strong, .stats-value, #event-date) {
+  font-family: var(--font-ui);
+  font-weight: 600;
+}
+
+body[data-skin="classic"] :is(.brand h1, .brand p, .eyebrow) {
+  letter-spacing: normal;
+}
+
+body[data-skin="classic"] .brand-mark {
+  color: var(--color-accent);
+  border-color: transparent;
+  background: var(--color-accent-soft);
+  transform: none;
+}
+
+body[data-skin="classic"] :is(.brand h1, .journey-group strong, #event-title, .dialog-header h2) {
+  color: #2c3e50;
+}
+
+body[data-skin="classic"] :is(.search-field, .journey-empty .icon, .legend-note, .timeline-years, .event-location-line, .event-route) {
+  color: var(--color-muted);
+}
+
+body[data-skin="classic"] :is(.journey-sidebar, .surface-dialog, .update-toast) {
+  border-color: var(--surface-edge);
+}
+
+body[data-skin="classic"] :is(.dialog-header, .panel-header) {
+  background: var(--surface-inset);
+  border-bottom-color: var(--color-accent-border);
+}
+
+body[data-skin="classic"] :is(.tool-button, .icon-button) {
+  color: #5a6c7d;
+}
+
+body[data-skin="classic"] :is(.tool-button:hover:not(.map-tools-toggle), .icon-button:hover, .secondary-button:hover:not(.sidebar-toggle), .event-select:hover, .journey-item:hover) {
+  background: var(--color-accent-soft);
+}
+
+body[data-skin="classic"] .secondary-button:hover {
+  border-color: var(--color-accent-border);
+}
+
+body[data-skin="classic"] :is(.lang-btn.active, .follow-mode-btn.active) {
+  color: var(--color-accent-ink);
+  background: var(--color-accent-soft);
+  border-color: var(--color-accent-border);
+}
+
+body[data-skin="classic"] :is(.tool-button.active, .tool-button.playing, .route-scope button.active) {
+  color: var(--color-accent-ink);
+  background: var(--color-accent-soft);
+}
+
+body[data-skin="classic"] .play-button {
+  background: var(--play-gradient);
+  border-color: transparent;
+  box-shadow: 0 2px 8px var(--color-accent-border);
+}
+
+body[data-skin="classic"] .play-button:hover:not(:disabled) {
+  background: var(--color-accent-hover);
+  box-shadow: 0 4px 15px var(--color-accent-border);
+}
+
+body[data-skin="classic"] .play-button:disabled {
+  background: #bdc3c7;
+  box-shadow: none;
+}
+
+body[data-skin="classic"] .journey-item[aria-current="step"] {
+  background: var(--color-accent-soft);
+  border-color: var(--color-accent-border);
+}
+
+body[data-skin="classic"] .journey-item::before {
+  border-color: #bdc3c7;
+}
+
+body[data-skin="classic"] .journey-item::after {
+  border-left-color: #ecf0f1;
+}
+
+body[data-skin="classic"] .journey-item[aria-current="step"]::before {
+  border-color: var(--color-accent);
+  background: var(--color-accent);
+}
+
+body[data-skin="classic"] :is(#event-date, .journey-item[aria-current="step"] .journey-item-date) {
+  color: var(--color-accent-ink);
+}
+
+body[data-skin="classic"] .event-date-item {
+  color: var(--color-accent-ink);
+}
+
+body[data-skin="classic"] .event-separator {
+  color: #bdc3c7;
+}
+
+body[data-skin="classic"] .route-stop {
+  border-color: var(--color-accent-border);
+  background: var(--surface-inset);
+}
+
+body[data-skin="classic"] #map {
+  background: #f0f0f0;
+}
+
+body[data-skin="classic"] .leaflet-tile-pane {
+  filter: none;
+}
+
+body[data-skin="classic"] :is(.map-legend, .route-scope, .map-view-tools) {
+  border-color: var(--color-accent-border);
+}
+
+body[data-skin="classic"] .map-legend {
+  color: #5a6c7d;
+}
+
+body[data-skin="classic"] .marker-birth { background: linear-gradient(135deg, #e74c3c, #c0392b); }
+body[data-skin="classic"] .marker-international { background: linear-gradient(135deg, #f39c12, #e67e22); }
+body[data-skin="classic"] .marker-long-distance { background: linear-gradient(135deg, #3498db, #2980b9); }
+body[data-skin="classic"] .marker-short-distance { background: linear-gradient(135deg, #1abc9c, #16a085); }
+body[data-skin="classic"] .marker-activity { background: linear-gradient(135deg, #27ae60, #229954); }
+body[data-skin="classic"] .marker-mixed { background: linear-gradient(135deg, #9b59b6, #8e44ad); }
+body[data-skin="classic"] .marker-transit { background: linear-gradient(135deg, #95a5a6, #7f8c8d); }
+body[data-skin="classic"] .marker-movement { background: linear-gradient(135deg, #34495e, #2c3e50); }
+
+body[data-skin="classic"] .location-marker.current {
+  background: var(--color-route);
+  box-shadow: 0 0 0 5px rgba(192, 57, 43, .14), 0 2px 6px rgba(0, 0, 0, .2);
+}
+
+body[data-skin="classic"] .current-location-tooltip {
+  color: var(--color-route);
+}
+
+body[data-skin="classic"] #timeline-slider::-webkit-slider-runnable-track {
+  background: linear-gradient(to right, var(--color-accent) var(--timeline-progress, 0%), var(--color-track) var(--timeline-progress, 0%));
+}
+
+body[data-skin="classic"] #timeline-slider::-moz-range-track { background: var(--color-track); }
+body[data-skin="classic"] #timeline-slider::-moz-range-progress { background: var(--color-accent); }
+
+body[data-skin="classic"] #timeline-slider::-webkit-slider-thumb {
+  background: var(--color-accent);
+  border-color: var(--color-surface);
+  box-shadow: 0 2px 8px var(--color-accent-border);
+}
+
+body[data-skin="classic"] #timeline-slider::-moz-range-thumb {
+  background: var(--color-accent);
+  border-color: var(--color-surface);
+  box-shadow: 0 2px 8px var(--color-accent-border);
+}
+
+body[data-skin="classic"] .music-progress-bar {
+  background: linear-gradient(transparent 5px, var(--color-track) 5px, var(--color-track) 11px, transparent 11px);
+}
+
+body[data-skin="classic"] .map-status {
+  border-color: #ffe58f;
+  color: #8a671b;
+}
+
+body[data-skin="classic"] :is(.toggle-slider, .panel-drag-handle) { background: #bdc3c7; }
+body[data-skin="classic"] .toggle-switch input:checked + .toggle-slider { background: var(--color-accent); }
+body[data-skin="classic"] .feedback-item > .icon { color: var(--color-accent); }
+body[data-skin="classic"] .feedback-item > .icon:last-child { color: var(--color-muted); }
+body[data-skin="classic"] .playlist-item.active { border-color: var(--color-accent-border); }
+body[data-skin="classic"] ::-webkit-scrollbar-thumb { background: rgba(127, 140, 141, .4); }
+body[data-skin="classic"] ::-webkit-scrollbar-thumb:hover { background: rgba(127, 140, 141, .65); }
+
+/* 窗口壳在本文件之后载入，因此使用皮肤作用域覆盖其暖色按压态。 */
+body[data-skin="classic"] .titlebar-btn:active { background: rgba(0, 0, 0, .1); }
+body[data-skin="classic"] .titlebar-close:hover { background: #e81123; color: #fff; }
+body[data-skin="classic"] .titlebar-close:active { background: #c50f1f; color: #fff; }

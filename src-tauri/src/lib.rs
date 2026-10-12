@@ -63,13 +63,40 @@ fn update_tray_language(app: tauri::AppHandle, language: String) {
 
 #[cfg(not(target_os = "android"))]
 #[tauri::command]
-fn set_topmost(app: tauri::AppHandle, topmost: bool) {
-    if let Some(w) = app.get_webview_window("main") {
-        let _ = w.set_always_on_top(topmost);
-    }
+fn set_topmost(app: tauri::AppHandle, topmost: bool) -> Result<(), String> {
+    let window = app.get_webview_window("main").ok_or("主窗口不可用")?;
+    let previous = window.is_always_on_top().map_err(|e| e.to_string())?;
+    let result = (|| {
+        let mut saved = settings::load_settings()?;
+        window.set_always_on_top(topmost).map_err(|e| e.to_string())?;
+        saved.topmost = topmost;
+        if let Err(error) = settings::save_settings(&saved) {
+            let _ = window.set_always_on_top(previous);
+            return Err(error);
+        }
+        Ok(())
+    })();
+    let actual = window.is_always_on_top().unwrap_or(previous);
     if let Some(state) = app.try_state::<TrayMenuState>() {
-        let _ = state.topmost.set_checked(topmost);
+        let _ = state.topmost.set_checked(actual);
     }
+    let _ = app.emit("topmost-changed", actual);
+    result
+}
+
+#[cfg(not(target_os = "android"))]
+#[tauri::command]
+fn set_autostart(app: tauri::AppHandle, enabled: bool) -> Result<(), String> {
+    // 自启由系统插件持久保存，系统实际值同时驱动托盘和设置面板。
+    let manager = app.autolaunch();
+    let previous = manager.is_enabled().map_err(|e| e.to_string())?;
+    let result = if enabled { manager.enable() } else { manager.disable() };
+    let actual = manager.is_enabled().unwrap_or(if result.is_ok() { enabled } else { previous });
+    if let Some(state) = app.try_state::<TrayMenuState>() {
+        let _ = state.autostart.set_checked(actual);
+    }
+    let _ = app.emit("autostart-changed", actual);
+    result.map_err(|e| e.to_string())
 }
 
 #[tauri::command]
@@ -156,6 +183,7 @@ fn setup_desktop(builder: tauri::Builder<tauri::Wry>) -> tauri::Builder<tauri::W
         .invoke_handler(tauri::generate_handler![
             update_tray_language,
             set_topmost,
+            set_autostart,
             load_settings,
             save_settings,
             get_config_dir,
@@ -193,26 +221,25 @@ fn setup_desktop(builder: tauri::Builder<tauri::Wry>) -> tauri::Builder<tauri::W
                     match event.id.as_ref() {
                         "show" => show_main_window(app),
                         "topmost" => {
-                            if let Some(w) = app.get_webview_window("main") {
-                                if let Some(state) = app.try_state::<TrayMenuState>() {
-                                    let checked = state.topmost.is_checked().unwrap_or(false);
-                                    let _ = w.set_always_on_top(checked);
-                                    let _ = w.emit("topmost-changed", checked);
+                            if let Some(state) = app.try_state::<TrayMenuState>() {
+                                let checked = state.topmost.is_checked().unwrap_or(false);
+                                if set_topmost(app.clone(), checked).is_err() {
+                                    let actual = app.get_webview_window("main")
+                                        .and_then(|window| window.is_always_on_top().ok())
+                                        .unwrap_or(!checked);
+                                    let _ = state.topmost.set_checked(actual);
+                                    let _ = app.emit("topmost-changed", actual);
                                 }
                             }
                         }
                         "autostart" => {
                             if let Some(state) = app.try_state::<TrayMenuState>() {
                                 let checked = state.autostart.is_checked().unwrap_or(false);
-                                let result = if checked {
-                                    app.autolaunch().enable()
-                                } else {
-                                    app.autolaunch().disable()
-                                };
-                                if result.is_err() {
-                                    let _ = state.autostart.set_checked(!checked);
+                                if set_autostart(app.clone(), checked).is_err() {
+                                    let actual = app.autolaunch().is_enabled().unwrap_or(!checked);
+                                    let _ = state.autostart.set_checked(actual);
+                                    let _ = app.emit("autostart-changed", actual);
                                 }
-                                let _ = app.emit("autostart-changed", checked);
                             }
                         }
                         "check_update" => {

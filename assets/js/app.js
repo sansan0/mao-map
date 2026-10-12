@@ -14,9 +14,10 @@ async function initI18n() {
     const preferredLocale = i18n.getPreferredLocale();
     console.log('检测到首选语言:', preferredLocale);
 
-    // 加载首选语言包
-    await i18n.loadLocale(preferredLocale);
-    await i18n.setLocale(preferredLocale);
+    // setLocale 会按需加载语言包；失败交给统一的加载错误与重试界面。
+    if (!await i18n.setLocale(preferredLocale)) {
+      throw new Error('界面语言资料加载失败');
+    }
 
     // 初始化语言切换按钮
     initLanguageSelector();
@@ -24,6 +25,7 @@ async function initI18n() {
     console.log('i18n 初始化完成, 当前语言:', i18n.getCurrentLocale());
   } catch (error) {
     console.error('i18n 初始化失败:', error);
+    throw error;
   }
 }
 
@@ -32,77 +34,54 @@ async function initI18n() {
  */
 function initLanguageSelector() {
   const langButtons = document.querySelectorAll('.lang-btn');
-
+  let switching = false;
   langButtons.forEach(btn => {
     const lang = btn.getAttribute('data-lang');
-
-    // 设置初始激活状态
-    if (lang === i18n.getCurrentLocale()) {
-      btn.classList.add('active');
-    } else {
-      btn.classList.remove('active');
-    }
-
-    // 绑定点击事件
+    btn.classList.toggle('active', lang === i18n.getCurrentLocale());
+    btn.setAttribute('aria-pressed', String(lang === i18n.getCurrentLocale()));
     btn.addEventListener('click', async () => {
       const selectedLang = btn.getAttribute('data-lang');
-
-      // 更新按钮状态
-      langButtons.forEach(b => b.classList.remove('active'));
-      btn.classList.add('active');
-
-      // 保存当前事件索引，用于语言切换后恢复位置
-      const savedEventIndex = currentEventIndex;
-
-      // 切换语言
-      await i18n.setLocale(selectedLang);
-
-      console.log('语言已切换至:', selectedLang);
-
-      // 重新加载事件数据
+      if (switching || selectedLang === i18n.getCurrentLocale() || !trajectoryData) return;
+      switching = true;
+      langButtons.forEach(button => { button.disabled = true; });
+      const previousLocale = i18n.getCurrentLocale();
+      stopPlayback();
+      cancelJourneyAnimation();
+      hideDetailPanel();
       try {
-        trajectoryData = await loadTrajectoryData();
-
-        // 更新时间轴滑块的最大值
-        const slider = document.getElementById('timeline-slider');
-        if (slider && trajectoryData && trajectoryData.events) {
-          slider.max = trajectoryData.events.length - 1;
-        }
-
-        // 更新总事件数显示
-        const totalCountEls = document.querySelectorAll('[id^="total-event-count"]');
-        totalCountEls.forEach((el) => {
-          if (el && trajectoryData) el.textContent = trajectoryData.events.length;
-        });
-
-        // 清除所有现有的标记和路径
-        eventMarkers.forEach((marker) => map.removeLayer(marker));
-        eventMarkers = [];
-        locationMarkers.clear();
-        pathLayers.forEach((path) => {
-          if (path._map) map.removeLayer(path);
-        });
-        pathLayers = [];
-        motionPaths.clear();
-
-        // 恢复到之前保存的事件索引位置
-        // 确保索引在有效范围内
-        const restoredIndex = Math.min(savedEventIndex, trajectoryData.events.length - 1);
-        currentEventIndex = restoredIndex;
-        previousEventIndex = Math.max(0, restoredIndex - 1);
-        showEventAtIndex(restoredIndex, false);
-
-        // 更新统计信息
+        // 先准备资料，下载过程中保持现有语言和年表可用。
+        const [localeLoaded, data] = await Promise.all([
+          i18n.isLocaleLoaded(selectedLang) ? Promise.resolve(true) : i18n.loadLocale(selectedLang),
+          loadTrajectoryData(selectedLang),
+        ]);
+        if (!localeLoaded) throw new Error('语言包加载失败');
+        // 用户可能在等待期间另选了事件，以切换完成时的真实位置为准。
+        const savedEventId = trajectoryData.events[currentEventIndex]?.id;
+        stopPlayback();
+        cancelJourneyAnimation();
+        hideDetailPanel();
+        if (!await i18n.setLocale(selectedLang)) throw new Error('语言包加载失败');
+        trajectoryData = data;
+        const restoredIndex = data.events.findIndex(event => event.id === savedEventId);
+        currentEventIndex = restoredIndex >= 0 ? restoredIndex : 0;
+        syncTimelineBounds();
+        publishJourneyData();
+        showEventAtIndex(currentEventIndex, false, true);
         updateStatistics();
-
-        console.log('语言切换完成，恢复到事件索引:', restoredIndex);
       } catch (error) {
         console.error('重新加载事件数据失败:', error);
-      }
-
-      // 更新速度下拉选择框
-      if (window.updateSpeedSelect) {
-        window.updateSpeedSelect();
+        if (i18n.getCurrentLocale() !== previousLocale) await i18n.setLocale(previousLocale);
+        showTemporaryMessage(previousLocale === 'en' ? 'Unable to change language. Please try again.' : '语言切换未完成，请重试。', 'warning');
+      } finally {
+        switching = false;
+        langButtons.forEach(button => {
+          button.disabled = false;
+          const active = button.dataset.lang === i18n.getCurrentLocale();
+          button.classList.toggle('active', active);
+          button.setAttribute('aria-pressed', String(active));
+        });
+        updatePlaybackUI();
+        updateAllSpeedUI();
       }
     });
   });
@@ -208,6 +187,262 @@ let pathFollowAnimationId = null;
 let motionPaths = new Map();
 let animationQueue = [];
 let isAnimationInProgress = false;
+let routeScope = readStoredPreference("mao-map:route-scope") === "current" ? "current" : "all";
+let mapTileLayer = null;
+let mapTileErrors = 0;
+let mapCameraIsProgrammatic = false;
+let mapCameraTimeout = null;
+let eventRenderVersion = 0;
+let publicEvents = Object.freeze([]);
+const reducedMotionQuery = window.matchMedia("(prefers-reduced-motion: reduce)");
+
+function readStoredPreference(key) {
+  try {
+    return localStorage.getItem(key);
+  } catch (error) {
+    return null;
+  }
+}
+
+function writeStoredPreference(key, value) {
+  try {
+    localStorage.setItem(key, String(value));
+    return true;
+  } catch (error) {
+    return false;
+  }
+}
+
+// 按真实控件的范围和步长恢复，避免变量、滑块与显示值各自采用不同数值。
+function normalizePreferenceNumber(value, fallback, min, max, step) {
+  const number = value === null || String(value).trim() === "" ? NaN : Number(value);
+  if (!Number.isFinite(number)) return fallback;
+  const clamped = Math.max(min, Math.min(max, number));
+  return Number((min + Math.round((clamped - min) / step) * step).toFixed(6));
+}
+
+function prefersReducedMotion() {
+  return reducedMotionQuery.matches;
+}
+
+function escapeHtml(value) {
+  return String(value ?? "").replace(/[&<>"']/g, (character) => ({
+    "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;",
+  }[character]));
+}
+
+function freezeSnapshot(value) {
+  if (value && typeof value === "object") {
+    Object.values(value).forEach(freezeSnapshot);
+    Object.freeze(value);
+  }
+  return value;
+}
+
+function publishJourneyData() {
+  publicEvents = freezeSnapshot(JSON.parse(JSON.stringify(trajectoryData?.events || [])));
+  document.dispatchEvent(new CustomEvent("journey:data-ready", { detail: { events: publicEvents } }));
+}
+
+function publishJourneyEvent() {
+  const event = publicEvents[currentEventIndex] || freezeSnapshot(JSON.parse(JSON.stringify(trajectoryData.events[currentEventIndex])));
+  document.dispatchEvent(new CustomEvent("journey:event-change", { detail: { index: currentEventIndex, event } }));
+}
+
+function syncTimelineBounds() {
+  const events = trajectoryData?.events || [];
+  const slider = document.getElementById("timeline-slider");
+  if (slider) {
+    slider.max = Math.max(0, events.length - 1);
+    slider.disabled = !events.length;
+  }
+  document.querySelectorAll('[id^="total-event-count"]').forEach(element => {
+    element.textContent = events.length;
+  });
+}
+
+function setMapStatus(message = "", retry = null) {
+  let status = document.getElementById("map-status");
+  if (!status) {
+    status = document.createElement("div");
+    status.id = "map-status";
+    status.className = "map-status";
+    status.setAttribute("role", "status");
+    (document.querySelector(".map-stage") || document.getElementById("container")).appendChild(status);
+  }
+  status.replaceChildren();
+  status.hidden = !message;
+  if (!message) return;
+  const text = document.createElement("span");
+  text.textContent = message;
+  status.appendChild(text);
+  if (retry) {
+    const button = document.createElement("button");
+    button.type = "button";
+    button.textContent = i18n.getCurrentLocale() === "en" ? "Retry" : "重试";
+    button.addEventListener("click", retry);
+    status.appendChild(button);
+  }
+}
+
+function withProgrammaticCamera(action, duration = 0) {
+  clearTimeout(mapCameraTimeout);
+  mapCameraIsProgrammatic = true;
+  action();
+  mapCameraTimeout = setTimeout(() => { mapCameraIsProgrammatic = false; }, duration + 150);
+}
+
+function cancelJourneyAnimation() {
+  eventRenderVersion += 1;
+  if (animationConfig._lockTimer) clearTimeout(animationConfig._lockTimer);
+  animationConfig._lockTimer = null;
+  animationConfig.isAnimating = false;
+  stopPathFollowCamera();
+  quickClearPathHighlight();
+  if (map) map.stop();
+}
+
+function goToJourneyEvent(index) {
+  const target = Number(index);
+  if (!Number.isInteger(target) || !trajectoryData?.events[target]) return false;
+  stopPlayback();
+  cancelJourneyAnimation();
+  isUserInteracting = false;
+  clearTimeout(userInteractionTimeout);
+  showEventAtIndex(target, false, true);
+  return true;
+}
+
+function getJourneyMapPadding() {
+  const padding = { paddingTopLeft: [40, 40], paddingBottomRight: [40, 40] };
+  if (!map) return padding;
+  const mapRect = map.getContainer().getBoundingClientRect();
+  const validRect = (rect) => rect &&
+    [rect.left, rect.top, rect.right, rect.bottom, rect.width, rect.height].every(Number.isFinite) &&
+    rect.width > 0 && rect.height > 0 && rect.right > rect.left && rect.bottom > rect.top;
+  if (!validRect(mapRect)) return padding;
+  padding.paddingTopLeft = [Math.min(40, mapRect.width / 4), Math.min(40, mapRect.height / 4)];
+  padding.paddingBottomRight = [...padding.paddingTopLeft];
+
+  if (document.body.dataset.viewMode === "browse") {
+    const stage = document.getElementById("map-stage");
+    if (!stage || stage.hidden) return padding;
+    const stageStyle = getComputedStyle(stage);
+    if (stageStyle.display === "none" || stageStyle.visibility === "hidden") return padding;
+    const stageRect = stage.getBoundingClientRect();
+    if (!validRect(stageRect)) return padding;
+    const left = Math.max(mapRect.left, stageRect.left);
+    const top = Math.max(mapRect.top, stageRect.top);
+    const right = Math.min(mapRect.right, stageRect.right);
+    const bottom = Math.min(mapRect.bottom, stageRect.bottom);
+    if (right <= left || bottom <= top) return padding;
+
+    // 底图铺满页面；网格中的地图区域界定年表、顶栏和底部资料之外的取景空间。
+    const insetX = Math.min(40, (right - left) / 4);
+    const insetY = Math.min(40, (bottom - top) / 4);
+    padding.paddingTopLeft = [left - mapRect.left + insetX, top - mapRect.top + insetY];
+    padding.paddingBottomRight = [mapRect.right - right + insetX, mapRect.bottom - bottom + insetY];
+    return padding;
+  }
+
+  const dock = document.getElementById("playback-dock");
+  if (!dock || dock.hidden) return padding;
+  const dockStyle = getComputedStyle(dock);
+  if (dockStyle.display === "none" || dockStyle.visibility === "hidden") return padding;
+  const dockRect = dock.getBoundingClientRect();
+  if (!validRect(dockRect)) return padding;
+  const overlapsHorizontally = Math.min(mapRect.right, dockRect.right) > Math.max(mapRect.left, dockRect.left);
+  const overlapsVertically = Math.min(mapRect.bottom, dockRect.bottom) > Math.max(mapRect.top, dockRect.top);
+  if (!overlapsHorizontally || !overlapsVertically) return padding;
+
+  // 连同浮动底栏下方的空隙一起留出；狭窄横屏下仍保留有效的地图计算区域。
+  const coveredHeight = Math.min(mapRect.bottom - Math.max(mapRect.top, dockRect.top), Math.max(0, mapRect.height - 48));
+  const verticalInset = Math.min(40, (mapRect.height - coveredHeight) / 4);
+  padding.paddingTopLeft[1] = verticalInset;
+  padding.paddingBottomRight[1] = coveredHeight + verticalInset;
+  return padding;
+}
+
+function getJourneyCameraCenter(latLng, zoom = map.getZoom()) {
+  const { paddingTopLeft, paddingBottomRight } = getJourneyMapPadding();
+  const offset = L.point(
+    (paddingBottomRight[0] - paddingTopLeft[0]) / 2,
+    (paddingBottomRight[1] - paddingTopLeft[1]) / 2
+  );
+  return map.unproject(map.project(latLng, zoom).add(offset), zoom);
+}
+
+function isJourneyPointVisible(latLng) {
+  const { paddingTopLeft, paddingBottomRight } = getJourneyMapPadding();
+  const point = map.latLngToContainerPoint(latLng);
+  const size = map.getSize();
+  return point.x >= paddingTopLeft[0] && point.x <= size.x - paddingBottomRight[0] &&
+    point.y >= paddingTopLeft[1] && point.y <= size.y - paddingBottomRight[1];
+}
+
+function focusCurrentEvent() {
+  if (!map || !trajectoryData?.events[currentEventIndex]) return;
+  isUserInteracting = false;
+  clearTimeout(userInteractionTimeout);
+  stopPathFollowCamera();
+  map.stop();
+  const bounds = calculatePathBounds(trajectoryData.events[currentEventIndex]);
+  if (bounds?.isValid()) {
+    withProgrammaticCamera(() => map.fitBounds(bounds, {
+      ...getJourneyMapPadding(), maxZoom: 8, animate: !prefersReducedMotion(), duration: 0.45,
+    }), 450);
+  }
+}
+
+function fitJourney() {
+  if (!map || !trajectoryData) return;
+  stopPathFollowCamera();
+  map.stop();
+  const coordinates = trajectoryData.events.slice(0, currentEventIndex + 1)
+    .flatMap((event) => [event.startCoords, ...event.transitCoords, event.endCoords])
+    .filter(Boolean).map(([lng, lat]) => [lat, lng]);
+  if (!coordinates.length) return;
+  isUserInteracting = true;
+  clearTimeout(userInteractionTimeout);
+  userInteractionTimeout = setTimeout(() => { isUserInteracting = false; }, 4000);
+  withProgrammaticCamera(() => map.fitBounds(L.latLngBounds(coordinates), {
+    ...getJourneyMapPadding(), maxZoom: 8, animate: !prefersReducedMotion(), duration: 0.45,
+  }), 450);
+}
+
+function setRouteScope(scope) {
+  if (scope !== "all" && scope !== "current") return false;
+  routeScope = scope;
+  writeStoredPreference("mao-map:route-scope", routeScope);
+  cancelJourneyAnimation();
+  if (trajectoryData) {
+    updatePathsStatic(currentEventIndex);
+    updateEventMarkers(currentEventIndex);
+  }
+  return true;
+}
+
+window.JourneyMap = Object.freeze({
+  getEvents: () => publicEvents,
+  getCurrentIndex: () => currentEventIndex,
+  goTo: goToJourneyEvent,
+  isPlaying: () => isPlaying,
+  togglePlay,
+  focusCurrent: focusCurrentEvent,
+  fitJourney,
+  setRouteScope,
+  getRouteScope: () => routeScope,
+  refreshAppearance,
+  copyCurrentEventData,
+});
+
+reducedMotionQuery.addEventListener?.("change", () => {
+  if (prefersReducedMotion() && trajectoryData) {
+    cancelJourneyAnimation();
+    updatePathsStatic(currentEventIndex);
+    scheduleNextPlayback();
+  }
+});
 
 // ==================== 全局常量 ====================
 const INTERNATIONAL_COORDINATES = {
@@ -225,16 +460,17 @@ function toggleControlPanel() {
   const panel = document.getElementById("timeline-control");
   const toggleBtn = document.getElementById("toggle-panel-btn");
   const mapEl = document.getElementById("map");
+  if (!panel || !toggleBtn || !mapEl) return;
 
   if (isPanelVisible) {
     panel.classList.add("hidden");
-    toggleBtn.textContent = "⬆";
+    toggleBtn.innerHTML = window.JourneyIcons.svg('chevron-up');
     mapEl.classList.remove("panel-visible");
     mapEl.classList.add("panel-hidden");
     isPanelVisible = false;
   } else {
     panel.classList.remove("hidden");
-    toggleBtn.textContent = "⬇";
+    toggleBtn.innerHTML = window.JourneyIcons.svg('chevron-down');
     mapEl.classList.remove("panel-hidden");
     mapEl.classList.add("panel-visible");
     isPanelVisible = true;
@@ -272,13 +508,6 @@ function initMobileInteractions() {
     toggleBtn.addEventListener("click", toggleControlPanel);
   }
 
-  if (map && isMobileDevice()) {
-    map.on("dblclick", (e) => {
-      e.originalEvent.preventDefault();
-      toggleControlPanel();
-    });
-  }
-
   initPanelDragClose();
 }
 
@@ -287,6 +516,7 @@ function initMobileInteractions() {
  */
 function initPanelDragClose() {
   if (!isMobileDevice()) return;
+  if (window.cleanupDragListeners) window.cleanupDragListeners();
 
   const panel = document.getElementById("location-detail-panel");
   const panelHeader = panel?.querySelector(".panel-header");
@@ -506,7 +736,8 @@ function initPanelDragClose() {
   bindEventListeners();
 
   const panelContent = panel.querySelector(".panel-content");
-  if (panelContent) {
+  if (panelContent && !panelContent.dataset.dragContentBound) {
+    panelContent.dataset.dragContentBound = "true";
     panelContent.addEventListener(
       "touchstart",
       (e) => {
@@ -524,23 +755,6 @@ function initPanelDragClose() {
     );
   }
 
-  const closeBtn = panel.querySelector(".panel-close");
-  if (closeBtn) {
-    closeBtn.addEventListener(
-      "touchstart",
-      (e) => {
-        e.stopPropagation();
-      },
-      { passive: true }
-    );
-
-    closeBtn.addEventListener("click", (e) => {
-      e.preventDefault();
-      e.stopPropagation();
-      hideDetailPanel();
-    });
-  }
-
   window.cleanupDragListeners = cleanupEventListeners;
 }
 
@@ -548,27 +762,82 @@ function initPanelDragClose() {
  * 初始化Leaflet地图
  */
 function initMap() {
+  // This legacy raster endpoint returns a blank image at z=2. Keep the
+  // original overview limit in sync for the map and its base tile layer.
+  const minBaseMapZoom = 4;
   map = L.map("map", {
     center: [35.8617, 104.1954],
     zoom: 5,
-    minZoom: 4,
+    minZoom: minBaseMapZoom,
     maxZoom: 10,
-    zoomControl: true,
+    zoomControl: false,
     attributionControl: false,
     tap: true,
     tapTolerance: 15,
   });
+  const zoomIn = document.getElementById('zoom-in');
+  const zoomOut = document.getElementById('zoom-out');
+  const syncZoomControls = () => {
+    zoomIn.disabled = map.getZoom() >= map.getMaxZoom();
+    zoomOut.disabled = map.getZoom() <= map.getMinZoom();
+    for (const button of [zoomIn, zoomOut]) button.setAttribute('aria-disabled', String(button.disabled));
+  };
+  const zoomBy = (delta) => {
+    const options = { animate: !prefersReducedMotion() };
+    if (document.body.dataset.viewMode === 'browse') {
+      const { paddingTopLeft, paddingBottomRight } = getJourneyMapPadding();
+      const size = map.getSize();
+      const center = L.point(
+        (paddingTopLeft[0] + size.x - paddingBottomRight[0]) / 2,
+        (paddingTopLeft[1] + size.y - paddingBottomRight[1]) / 2
+      );
+      const zoom = Math.max(map.getMinZoom(), Math.min(map.getMaxZoom(), map.getZoom() + delta));
+      map.setZoomAround(center, zoom, options);
+    } else if (delta > 0) {
+      map.zoomIn(delta, options);
+    } else {
+      map.zoomOut(-delta, options);
+    }
+  };
+  zoomIn.addEventListener('click', event => {
+    if (!zoomIn.disabled) zoomBy(event.shiftKey ? 3 : 1);
+  });
+  zoomOut.addEventListener('click', event => {
+    if (!zoomOut.disabled) zoomBy(event.shiftKey ? -3 : -1);
+  });
+  map.on('zoomend zoomlevelschange', syncZoomControls);
+  syncZoomControls();
 
-  L.tileLayer(
+  mapTileLayer = L.tileLayer(
     "https://webrd0{s}.is.autonavi.com/appmaptile?lang=zh_cn&size=1&scale=1&style=8&x={x}&y={y}&z={z}",
     {
       subdomains: "1234",
       attribution: "© 高德地图",
+      minZoom: minBaseMapZoom,
       maxZoom: 18,
     }
   ).addTo(map);
 
+  mapTileLayer.on("tileerror", () => { mapTileErrors += 1; });
+  mapTileLayer.on("load", () => {
+    if (mapTileErrors > 0) {
+      setMapStatus(i18n.getCurrentLocale() === "en"
+        ? "Some map tiles could not load. The timeline remains available."
+        : "部分底图未能加载，仍可浏览年表和足迹。", retryMapTiles);
+    } else {
+      setMapStatus();
+    }
+  });
+  mapTileLayer.on("loading", () => { mapTileErrors = 0; });
+
   console.log("地图初始化完成");
+}
+
+function retryMapTiles() {
+  if (!mapTileLayer) return;
+  mapTileErrors = 0;
+  setMapStatus(i18n.getCurrentLocale() === "en" ? "Reloading map…" : "正在重新加载底图…");
+  mapTileLayer.redraw();
 }
 
 // ==================== 统计面板控制 ====================
@@ -594,6 +863,7 @@ function initSettingsPanel() {
       settingsPanel.classList.add("visible");
       settingsBtn.classList.add("active");
     }
+    settingsBtn.setAttribute("aria-expanded", String(!isVisible));
   }
 
   settingsBtn.addEventListener("click", toggleSettings);
@@ -606,6 +876,7 @@ function initSettingsPanel() {
         !settingsBtn.contains(e.target)) {
       settingsPanel.classList.remove("visible");
       settingsBtn.classList.remove("active");
+      settingsBtn.setAttribute("aria-expanded", "false");
     }
   });
 
@@ -676,36 +947,19 @@ function showDetailPanel(locationGroup) {
   const { location, events } = locationGroup;
   const visitCount = events.length;
 
-  // 使用当前语言的访问类型标签进行过滤
-  const transitLabel = i18n.t('ui.visitType.transit');
-  const destinationLabel = i18n.t('ui.visitType.destination');
-  const startLabel = i18n.t('ui.visitType.start');
-  const activityLabel = i18n.t('ui.visitType.activity');
-  const birthLabel = i18n.t('ui.visitType.birth');
-
-  const transitCount = events.filter((e) => e.visitType === transitLabel).length;
-  const destCount = events.filter((e) => e.visitType === destinationLabel).length;
-  const startCount = events.filter((e) => e.visitType === startLabel).length;
-  const activityCount = events.filter((e) => e.visitType === activityLabel).length;
-  const birthCount = events.filter((e) => e.visitType === birthLabel).length;
-
-  titleEl.textContent = `📍 ${location}`;
+  titleEl.textContent = location;
 
   // 使用国际化的摘要文本
-  const summaryText = i18n.t('ui.panel.visitSummary', { count: visitCount });
+  const summaryText = i18n.getCurrentLocale() === "en"
+    ? `${visitCount} related events up to this date`
+    : `截至当前时间点 · ${visitCount} 条相关事件`;
 
-  let descParts = [];
-  if (birthCount > 0) descParts.push(`${birthCount}${i18n.t('ui.panel.visitTypes.birth')}`);
-  if (destCount > 0) descParts.push(`${destCount}${i18n.t('ui.panel.visitTypes.arrive')}`);
-  if (startCount > 0) descParts.push(`${startCount}${i18n.t('ui.panel.visitTypes.depart')}`);
-  if (transitCount > 0) descParts.push(`${transitCount}${i18n.t('ui.panel.visitTypes.transit')}`);
-  if (activityCount > 0) descParts.push(`${activityCount}${i18n.t('ui.panel.visitTypes.activity')}`);
-
-  if (descParts.length > 0) {
-    summaryEl.innerHTML = summaryText + ` (${descParts.join('，')})`;
-  } else {
-    summaryEl.innerHTML = summaryText;
-  }
+  summaryEl.replaceChildren();
+  const count = document.createElement('strong');
+  count.className = 'visit-count-highlight';
+  count.textContent = visitCount;
+  const parts = summaryText.split(String(visitCount));
+  summaryEl.append(parts[0], count, parts.slice(1).join(String(visitCount)));
 
   const sortedEvents = [...events].sort((a, b) => a.index - b.index);
 
@@ -759,65 +1013,50 @@ function showDetailPanel(locationGroup) {
       }
 
       // 使用国际化的年龄显示
-      const ageDisplay = event.age
-        ? `<div class="event-age">${i18n.t('ui.panel.eventAge', { age: event.age })}</div>`
+      const ageDisplay = Number.isFinite(event.age)
+        ? `<span class="event-age">${escapeHtml(i18n.t('ui.panel.eventAge', { age: event.age }))}</span>`
         : "";
 
       return `
       <div class="${itemClass} ${visitTypeClass}" data-event-index="${
         event.index
       }">
-        <div class="event-header">
+        <button class="event-select" type="button" data-event-index="${event.index}" aria-current="${isCurrentEvent ? 'step' : 'false'}">
+        <span class="event-header">
           <span class="visit-order-number">${orderNumber}</span>
-          <span class="event-date-item">${event.date}</span>
-          <span class="visit-order ${visitOrderClass}">${visitTypeLabel}</span>
-        </div>
-        <div class="event-description">${eventDescription}</div>
+          <span class="event-date-item">${escapeHtml(event.date)}</span>
+          <span class="visit-order ${visitOrderClass}">${escapeHtml(visitTypeLabel)}</span>
+        </span>
+        <span class="event-description">${escapeHtml(eventDescription)}</span>
         ${ageDisplay}
+        </button>
+        ${renderEventSource(event)}
       </div>
     `;
     })
     .join("");
 
   contentEl.innerHTML = eventListHtml;
+  contentEl.querySelectorAll('.event-source a').forEach(link => {
+    link.addEventListener('click', event => {
+      event.preventDefault();
+      openExternalUrl(link.href);
+    });
+  });
 
-  const eventItems = contentEl.querySelectorAll(".event-item");
+  const eventItems = contentEl.querySelectorAll(".event-select");
   eventItems.forEach((item) => {
     const eventIndex = parseInt(item.dataset.eventIndex);
 
     item.addEventListener("click", (e) => {
       e.stopPropagation();
 
-      if (currentHighlightedEventIndex === eventIndex) {
-        clearPathHighlight();
-        return;
-      }
-
-      if (currentHighlightedEventIndex !== -1) {
-        quickClearPathHighlight();
-      }
-
-      highlightEventPath(eventIndex);
-
-      item.classList.add("event-item-clicked");
-      setTimeout(() => {
-        item.classList.remove("event-item-clicked");
-      }, 300);
-    });
-
-    item.addEventListener("mouseenter", (e) => {
-      if (currentHighlightedEventIndex !== eventIndex) {
-        item.style.cursor = "pointer";
-        item.style.transform = "translateX(2px)";
-      }
-    });
-
-    item.addEventListener("mouseleave", (e) => {
-      item.style.transform = "";
+      goToJourneyEvent(eventIndex);
+      hideDetailPanel();
     });
   });
 
-  if (backdrop && isMobileDevice()) {
+  if (backdrop) {
     backdrop.classList.add("visible");
   }
 
@@ -828,6 +1067,16 @@ function showDetailPanel(locationGroup) {
       initPanelDragClose();
     }, 100);
   }
+}
+
+function renderEventSource(event) {
+  if (!event.verification) return "";
+  const source = String(event.verification);
+  const url = source.match(/https?:\/\/[^\s<>"']+/)?.[0];
+  const sourceHtml = url
+    ? `${escapeHtml(source.replace(url, '').trim())} <a href="${escapeHtml(url)}" target="_blank" rel="noopener noreferrer">${i18n.getCurrentLocale() === "en" ? "Open source" : "查看原文"} ${window.JourneyIcons.svg('arrow-up-right')}</a>`
+    : escapeHtml(source);
+  return `<details class="event-source"><summary>${i18n.getCurrentLocale() === "en" ? "Source notes" : "资料与出处"}</summary><p>${sourceHtml}</p></details>`;
 }
 
 /**
@@ -979,12 +1228,8 @@ function openGitHubProject() {
  * 检测是否为移动设备
  */
 function isMobileDevice() {
-  const userAgent = navigator.userAgent || navigator.vendor || window.opera;
-  const mobileRegex = /android|webos|iphone|ipad|ipod|blackberry|iemobile|opera mini|mobile|tablet/i;
-  const hasTouchScreen = 'ontouchstart' in window || navigator.maxTouchPoints > 0;
-  const isSmallScreen = window.innerWidth <= 768;
-
-  return mobileRegex.test(userAgent) || (hasTouchScreen && isSmallScreen);
+  return window.matchMedia("(max-width: 900px)").matches || window.innerHeight <= 560 ||
+    (Boolean(window.__TAURI_INTERNALS__) && /android/i.test(navigator.userAgent));
 }
 
 /**
@@ -1109,6 +1354,7 @@ function showTemporaryMessage(message, type = "info") {
   const messageDiv = document.createElement("div");
   messageDiv.className = "temp-message";
   messageDiv.textContent = message;
+  messageDiv.setAttribute("role", "status");
 
   const colors = {
     success: { bg: "rgba(39, 174, 96, 0.9)", border: "#27ae60" },
@@ -1143,8 +1389,10 @@ function showTemporaryMessage(message, type = "info") {
   setTimeout(() => {
     if (messageDiv.parentNode) {
       messageDiv.style.opacity = "0";
-      messageDiv.style.transform = "translate(-50%, -50%) scale(0.9)";
-      messageDiv.style.transition = "all 0.3s ease";
+      if (!prefersReducedMotion()) {
+        messageDiv.style.transform = "translate(-50%, -50%) scale(0.9)";
+        messageDiv.style.transition = "opacity 0.2s ease, transform 0.2s ease";
+      }
 
       setTimeout(() => {
         if (messageDiv.parentNode) {
@@ -1270,11 +1518,7 @@ async function loadGeographicData() {
     return true;
   } catch (error) {
     console.warn("外部地理数据加载失败:", error.message);
-    Object.entries(INTERNATIONAL_COORDINATES).forEach(([name, coords]) => {
-      coordinateMap.set(name, coords);
-    });
-    console.log("已加载备用国际坐标数据");
-    return true;
+    return false;
   }
 }
 
@@ -1282,9 +1526,8 @@ async function loadGeographicData() {
  * 加载轨迹事件数据
  * 英文版本使用英文事件描述，但坐标信息从中文数据获取（因为坐标映射基于中文地名）
  */
-async function loadTrajectoryData() {
+async function loadTrajectoryData(locale = i18n.getCurrentLocale()) {
   try {
-    const locale = i18n.getCurrentLocale();
     const isEnglish = locale === 'en';
 
     // 始终加载中文数据（用于坐标匹配）
@@ -1322,15 +1565,29 @@ async function loadTrajectoryData() {
         throw new Error("英文事件数据格式错误或为空");
       }
 
-      // 使用英文的事件描述，但用中文的坐标信息
+      // 中文资料是事件身份与坐标的基准。按日期队列匹配，避免缺译一条后整体错位。
+      const translationsByDate = new Map();
+      enData.events.forEach(event => {
+        if (!translationsByDate.has(event.date)) translationsByDate.set(event.date, []);
+        translationsByDate.get(event.date).push(event);
+      });
+      const movementTranslations = {
+        "出生": "Birth", "原地活动": "Local Activity", "短途移动": "Short-distance Movement",
+        "长途移动": "Long-distance Movement", "国际移动": "International Movement",
+      };
       const mergedData = {
         title: enData.title,
-        events: enData.events.map((enEvent, index) => {
-          const zhEvent = zhData.events[index];
+        events: zhData.events.map((zhEvent, index) => {
+          const enEvent = translationsByDate.get(zhEvent.date)?.shift();
           return {
+            ...zhEvent,
             ...enEvent,
-            // 使用中文数据的坐标信息（因为坐标映射基于中文地名）
-            coordinates: zhEvent ? zhEvent.coordinates : enEvent.coordinates
+            id: `journey-${index}`,
+            event: enEvent?.event || (zhEvent.event === "视察安徽" ? "Inspection visit to Anhui" : zhEvent.event),
+            movementType: enEvent?.movementType || movementTranslations[zhEvent.movementType] || zhEvent.movementType,
+            coordinates: zhEvent.coordinates,
+            verification: enEvent?.verification || zhEvent.verification,
+            userVerification: zhEvent.userVerification,
           };
         })
       };
@@ -1453,10 +1710,12 @@ function processTrajectoryData(data) {
   const processedEvents = data.events.map((event, index) => {
     const processed = {
       ...event,
+      id: event.id || `journey-${index}`,
       index: index,
       startCoords: null,
       endCoords: null,
       transitCoords: [],
+      transitStops: [],
       startLocation: null,
       endLocation: null,
     };
@@ -1474,9 +1733,10 @@ function processTrajectoryData(data) {
     }
 
     if (event.coordinates && event.coordinates.transit) {
-      processed.transitCoords = event.coordinates.transit
-        .map((transit) => getCoordinates(transit))
-        .filter((coords) => coords !== null);
+      processed.transitStops = event.coordinates.transit
+        .map((transit) => getCoordinatesWithLocation(transit))
+        .filter((stop) => stop.coordinates !== null);
+      processed.transitCoords = processed.transitStops.map(stop => stop.coordinates);
     }
 
     if (!processed.endLocation && processed.startLocation) {
@@ -1497,7 +1757,7 @@ function processTrajectoryData(data) {
 /**
  * 按地理位置聚合事件
  */
-function groupEventsByLocation(events, maxIndex) {
+function groupEventsByLocation(events, maxIndex, minIndex = 0) {
   const groups = new Map();
 
   // 获取国际化的访问类型标签
@@ -1512,7 +1772,7 @@ function groupEventsByLocation(events, maxIndex) {
   const birthType = locale === 'en' ? 'Birth' : '出生';
   const localActivityType = locale === 'en' ? 'Local Activity' : '原地活动';
 
-  for (let i = 0; i <= maxIndex; i++) {
+  for (let i = minIndex; i <= maxIndex; i++) {
     const event = events[i];
 
     if (event.movementType === birthType) {
@@ -1622,10 +1882,9 @@ function groupEventsByLocation(events, maxIndex) {
         event.coordinates &&
         event.coordinates.transit
       ) {
-        event.transitCoords.forEach((coords, transitIndex) => {
-          if (coords && event.coordinates.transit[transitIndex]) {
-            const transitInfo = event.coordinates.transit[transitIndex];
-            const transitResult = getCoordinatesWithLocation(transitInfo);
+        event.transitStops.forEach((transitResult) => {
+          const coords = transitResult.coordinates;
+          if (coords) {
 
             if (transitResult.coordinates && transitResult.location) {
               const coordKey = `${coords[0]},${coords[1]}`;
@@ -1659,6 +1918,20 @@ function groupEventsByLocation(events, maxIndex) {
     }
   }
 
+  // 同一事件的起终点或多次途经可能在同一地点；地点数字表示相关事件数。
+  groups.forEach(group => {
+    const uniqueEvents = new Map();
+    group.events.forEach(event => {
+      const existing = uniqueEvents.get(event.index);
+      if (!existing) {
+        uniqueEvents.set(event.index, { ...event, visitTypes: [event.visitType] });
+      } else {
+        if (!existing.visitTypes.includes(event.visitType)) existing.visitTypes.push(event.visitType);
+        if (event.visitType === destinationLabel) existing.visitType = destinationLabel;
+      }
+    });
+    group.events = Array.from(uniqueEvents.values());
+  });
   return groups;
 }
 
@@ -1748,11 +2021,14 @@ function createLocationMarker(
     icon: markerElement,
     interactive: true,
     keyboard: true,
-    zIndexOffset: 1000,
+    zIndexOffset: isCurrent ? 2000 : 1000,
+    title: `${location} · ${visitCount} ${i18n.getCurrentLocale() === "en" ? "events" : "条相关事件"}`,
+    alt: location,
   });
 
   const clickHandler = function (e) {
-    e.originalEvent.stopPropagation();
+    e.originalEvent?.stopPropagation();
+    stopPlayback();
     showDetailPanel(locationGroup);
   };
 
@@ -1806,10 +2082,12 @@ function createLocationMarker(
     )})`;
   }
 
-  marker.bindTooltip(tooltipText, {
+  marker.bindTooltip(isCurrent ? escapeHtml(location) : escapeHtml(tooltipText), {
     direction: "top",
     offset: [0, -15],
-    className: "simple-tooltip",
+    opacity: 1, // 背景透明度由共享材质控制，保留文字清晰度。
+    className: isCurrent ? "current-location-tooltip" : "simple-tooltip",
+    permanent: isCurrent,
   });
 
   return marker;
@@ -1858,15 +2136,17 @@ function createMotionPath(
   }
 
   const polylineOptions = {
-    color: isLatest ? "#c0392b" : "#85c1e9",
-    weight: isConnectionPath ? 2 : 3,
-    opacity: isLatest ? 0.9 : isConnectionPath ? 0.4 : 0.6,
+    color: getRouteColor(isLatest),
+    weight: isLatest ? 3.5 : 2,
+    opacity: isLatest ? 0.95 : 0.32,
     smoothFactor: 1,
-    dashArray: isConnectionPath ? "4, 8" : "8, 8",
+    dashArray: isConnectionPath ? "4, 8" : null,
+    interactive: false,
   };
+  if (!pathCoords.some((point) => point[0] !== pathCoords[0][0] || point[1] !== pathCoords[0][1])) return null;
 
   // 拖动时使用极短的动画时间，实现快速显示
-  let effectiveDuration = isDragging ? 1 : animationConfig.pathDuration;
+  let effectiveDuration = isDragging || prefersReducedMotion() ? 1 : animationConfig.pathDuration;
 
   const motionOptions = {
     auto: isDragging ? true : false,
@@ -1895,19 +2175,42 @@ function createMotionPath(
   return motionPath;
 }
 
+function getRouteColor(isLatest) {
+  const variable = isLatest ? "--color-route" : "--color-history";
+  return (map && getComputedStyle(map.getContainer()).getPropertyValue(variable).trim()) ||
+    getComputedStyle(document.documentElement).getPropertyValue(variable).trim() ||
+    (isLatest ? "#c0392b" : "#7893a3");
+}
+
+function refreshAppearance() {
+  const currentColor = getRouteColor(true);
+  const historyColor = getRouteColor(false);
+  pathLayers.forEach(path => {
+    const color = path._isLatest || path._eventIndex === currentHighlightedEventIndex ? currentColor : historyColor;
+    path.setStyle({ color });
+    if (path._path) path._path.style.stroke = color;
+    if (path._pathOptions) path._pathOptions.color = color;
+  });
+  highlightedPaths.forEach(({ path, originalStyle }) => {
+    originalStyle.color = path._isLatest ? currentColor : historyColor;
+  });
+  return true;
+}
+
 /**
  * 更新路径样式
  */
 function updatePathStyle(path, isLatest) {
   if (!path) return;
 
-  const color = isLatest ? "#c0392b" : "#85c1e9";
-  const opacity = isLatest ? 0.9 : 0.6;
+  const color = getRouteColor(isLatest);
+  const opacity = isLatest ? 0.95 : 0.32;
 
   path.setStyle({
     color: color,
     opacity: opacity,
-    dashArray: "8, 8",
+    weight: isLatest ? 3.5 : 2,
+    dashArray: null,
   });
 
   path._isLatest = isLatest;
@@ -1934,7 +2237,7 @@ function updatePathsStatic(targetIndex) {
   const locale = i18n.getCurrentLocale();
   const localActivityType = locale === 'en' ? 'Local Activity' : '原地活动';
 
-  for (let i = 0; i <= targetIndex; i++) {
+  for (let i = routeScope === "current" ? targetIndex : 0; i <= targetIndex; i++) {
     const currentEvent = trajectoryData.events[i];
 
     if (
@@ -1942,12 +2245,6 @@ function updatePathsStatic(targetIndex) {
       currentEvent.endCoords &&
       currentEvent.movementType !== localActivityType
     ) {
-      console.log(
-        `${isDragging ? "拖动" : "静态"}添加路径: 事件 ${i}: ${
-          currentEvent.event
-        }`
-      );
-
       const isLatest = i === targetIndex;
       const motionPath = createMotionPath(
         currentEvent.startCoords,
@@ -1965,18 +2262,9 @@ function updatePathsStatic(targetIndex) {
         motionPath.addTo(map);
         pathLayers.push(motionPath);
         motionPaths.set(i, motionPath);
-
-        // 如果是拖动状态，立即启动动画以快速显示
-        if (isDragging && motionPath.motionStart) {
-          motionPath.motionStart();
-        }
-
-        console.log(`成功添加${isDragging ? "拖动" : "静态"}路径: 事件 ${i}`);
-      } else {
-        console.warn(`路径创建失败: 事件 ${i}`);
+        // leaflet.motion 初始路径为空；静态跳转必须显式完成路径。
+        motionPath.motionStop();
       }
-    } else {
-      console.log(`跳过事件 ${i}: ${currentEvent.event} (原地活动或缺少坐标)`);
     }
   }
 }
@@ -2040,76 +2328,10 @@ function batchAnimatePathsDisappear(paths, staggerDelay = 200) {
  * 动画更新路径
  */
 function updatePathsAnimated(targetIndex, isReverse = false) {
-  if (isReverse) {
-    // 反向动画：让后面的路径逐渐消失
-    const pathsToRemove = pathLayers.filter(
-      (path) => path._eventIndex > targetIndex
-    );
-
-    if (pathsToRemove.length > 0) {
-      console.log(`开始反向消失动画，移除 ${pathsToRemove.length} 条路径`);
-
-      pathsToRemove.forEach((path, index) => {
-        setTimeout(() => {
-          animatePathDisappear(path);
-        }, index * 100);
-      });
-
-      // 延迟清理路径数组和映射
-      setTimeout(() => {
-        pathsToRemove.forEach((pathToRemove) => {
-          const pathIndex = pathLayers.indexOf(pathToRemove);
-          if (pathIndex > -1) {
-            pathLayers.splice(pathIndex, 1);
-          }
-          if (motionPaths.has(pathToRemove._eventIndex)) {
-            motionPaths.delete(pathToRemove._eventIndex);
-          }
-        });
-      }, pathsToRemove.length * 200 + animationConfig.pathDuration);
-    }
-  } else {
-    // 正向动画：添加新路径
-    const currentEvent = trajectoryData.events[targetIndex];
-
-    pathLayers.forEach((path) => {
-      if (path._isLatest) {
-        updatePathStyle(path, false);
-      }
-    });
-
-    // 获取当前语言环境的本地活动类型标识
-    const locale = i18n.getCurrentLocale();
-    const localActivityType = locale === 'en' ? 'Local Activity' : '原地活动';
-
-    if (
-      currentEvent.startCoords &&
-      currentEvent.endCoords &&
-      currentEvent.movementType !== localActivityType
-    ) {
-      console.log(
-        `Motion 添加路径: 事件 ${targetIndex} - ${currentEvent.event}`
-      );
-
-      const motionPath = createMotionPath(
-        currentEvent.startCoords,
-        currentEvent.endCoords,
-        currentEvent.transitCoords,
-        true,
-        targetIndex,
-        false,
-        false
-      );
-
-      if (motionPath) {
-        motionPath.addTo(map);
-        pathLayers.push(motionPath);
-        motionPaths.set(targetIndex, motionPath);
-
-        motionPath.motionStart();
-      }
-    }
-  }
+  // 统一重建使快速跳转、反向浏览与范围切换不会留下延迟删除的旧路线。
+  updatePathsStatic(targetIndex);
+  const latestPath = motionPaths.get(targetIndex);
+  if (!isReverse && !prefersReducedMotion() && latestPath) latestPath.motionStart();
 }
 
 /**
@@ -2120,7 +2342,7 @@ function updateEventMarkers(targetIndex) {
   eventMarkers = [];
   locationMarkers.clear();
 
-  locationGroups = groupEventsByLocation(trajectoryData.events, targetIndex);
+  locationGroups = groupEventsByLocation(trajectoryData.events, targetIndex, routeScope === "current" ? targetIndex : 0);
 
   const currentEvent = trajectoryData.events[targetIndex];
   const currentCoordKey = currentEvent.endCoords
@@ -2186,20 +2408,20 @@ function ensureMarkersInteractivity() {
 function updateDragPreview(index) {
   if (!trajectoryData || index >= trajectoryData.events.length || index < 0) return;
 
-  previousEventIndex = currentEventIndex;
-  currentEventIndex = index;
   const event = trajectoryData.events[index];
 
   // 只更新文字信息（轻量操作）
   updateCurrentEventInfo(event);
-  updateProgress();
+  updateProgress(index);
+  const snapshot = publicEvents[index] || freezeSnapshot(JSON.parse(JSON.stringify(event)));
+  document.dispatchEvent(new CustomEvent("journey:event-preview", { detail: { index, event: snapshot } }));
 }
 
 /**
  * 显示指定索引的事件
  */
 function showEventAtIndex(index, animated = true, isUserAction = false) {
-  if (!trajectoryData || index >= trajectoryData.events.length || index < 0)
+  if (!Number.isInteger(index) || !trajectoryData || index >= trajectoryData.events.length || index < 0)
     return;
 
   // 动画锁逻辑：
@@ -2207,12 +2429,10 @@ function showEventAtIndex(index, animated = true, isUserAction = false) {
   // - 用户主动操作时（isUserAction），中断当前动画并立即执行
   if (animationConfig.isAnimating && !isUserAction) return;
 
-  // 用户主动操作时清除之前的动画锁定时器
-  if (isUserAction && animationConfig._lockTimer) {
-    clearTimeout(animationConfig._lockTimer);
-    animationConfig._lockTimer = null;
-    animationConfig.isAnimating = false;
-  }
+  if (isUserAction) stopPlayback();
+  cancelJourneyAnimation();
+  animated = animated && !prefersReducedMotion() && Math.abs(index - currentEventIndex) === 1;
+  const renderVersion = eventRenderVersion;
 
   const isMovingForward = index > currentEventIndex;
   const isMovingBackward = index < currentEventIndex;
@@ -2258,10 +2478,13 @@ function showEventAtIndex(index, animated = true, isUserAction = false) {
 
   if (animated) {
     setTimeout(() => {
+      if (renderVersion !== eventRenderVersion) return;
       ensureMarkersInteractivity();
       stopPathFollowCamera();
     }, animationConfig.pathDuration + 100);
   }
+  updatePlaybackUI();
+  publishJourneyEvent();
 }
 
 // ==================== 镜头跟随控制 ====================
@@ -2299,7 +2522,9 @@ function handleCameraFollow(currentEvent, previousIndex, animated = true) {
   if (!endCoords) return;
 
   // 计算移动距离
-  const distance = startCoords ? coordDistance(startCoords, endCoords) : 0;
+  const distance = Math.max(0, ...[startCoords, ...currentEvent.transitCoords].filter(Boolean)
+    .map(coords => coordDistance(coords, endCoords)));
+  animated = animated && !prefersReducedMotion();
 
   // 镜头时长略短于路径动画，让镜头先到位
   const cameraDuration = animated ? Math.max(300, animationConfig.cameraFollowDuration * 0.8) / 1000 : 0;
@@ -2308,11 +2533,14 @@ function handleCameraFollow(currentEvent, previousIndex, animated = true) {
   // 原地活动（距离极小或无起点）：温和平移到终点，不改变缩放
   if (distance < 0.5) {
     const [lng, lat] = endCoords;
-    map.flyTo([lat, lng], Math.max(map.getZoom(), 6), {
+    if (prevEvent?.endCoords && coordDistance(prevEvent.endCoords, endCoords) < 0.01 &&
+        isJourneyPointVisible([lat, lng])) return;
+    const targetZoom = Math.max(map.getZoom(), 6);
+    withProgrammaticCamera(() => map.flyTo(getJourneyCameraCenter([lat, lng], targetZoom), targetZoom, {
       animate: animated,
       duration: panDuration,
       easeLinearity: 0.5,
-    });
+    }), panDuration * 1000);
     return;
   }
 
@@ -2322,33 +2550,32 @@ function handleCameraFollow(currentEvent, previousIndex, animated = true) {
     // 根据距离选择缩放级别：越近越放大
     const targetZoom = distance < 1 ? Math.max(map.getZoom(), 7) :
                        distance < 2 ? Math.max(map.getZoom(), 6) : 6;
-    map.flyTo([lat, lng], targetZoom, {
+    withProgrammaticCamera(() => map.flyTo(getJourneyCameraCenter([lat, lng], targetZoom), targetZoom, {
       animate: animated,
       duration: cameraDuration,
       easeLinearity: 0.5,
-    });
+    }), cameraDuration * 1000);
     return;
   }
 
   // 长途移动（≥ 3度）：展示完整路径
   const bounds = calculatePathBounds(currentEvent, previousIndex);
   if (bounds && bounds.isValid()) {
-    map.flyToBounds(bounds, {
+    withProgrammaticCamera(() => map.flyToBounds(bounds, {
       animate: animated,
       duration: cameraDuration,
-      paddingTopLeft: [50, 50],
-      paddingBottomRight: [50, 100],
+      ...getJourneyMapPadding(),
       maxZoom: 8,
       easeLinearity: 0.5,
-    });
+    }), cameraDuration * 1000);
   } else {
     // fallback：飞到终点
     const [lng, lat] = endCoords;
-    map.flyTo([lat, lng], 6, {
+    withProgrammaticCamera(() => map.flyTo(getJourneyCameraCenter([lat, lng], 6), 6, {
       animate: animated,
       duration: cameraDuration,
       easeLinearity: 0.5,
-    });
+    }), cameraDuration * 1000);
   }
 }
 
@@ -2357,13 +2584,6 @@ function handleCameraFollow(currentEvent, previousIndex, animated = true) {
  */
 function calculatePathBounds(currentEvent, previousIndex) {
   const coordinates = [];
-
-  if (previousIndex >= 0 && trajectoryData.events[previousIndex]) {
-    const prevEvent = trajectoryData.events[previousIndex];
-    if (prevEvent.endCoords) {
-      coordinates.push([prevEvent.endCoords[1], prevEvent.endCoords[0]]);
-    }
-  }
 
   if (currentEvent.startCoords) {
     coordinates.push([
@@ -2413,6 +2633,7 @@ function initMapInteractionDetection() {
   const pauseDuration = 4000; // 用户交互后暂停跟随 4 秒
 
   function onUserInteraction() {
+    stopPathFollowCamera();
     isUserInteracting = true;
     if (userInteractionTimeout) clearTimeout(userInteractionTimeout);
     userInteractionTimeout = setTimeout(() => {
@@ -2422,11 +2643,13 @@ function initMapInteractionDetection() {
   }
 
   map.on('dragstart', onUserInteraction);
+  map.getContainer().addEventListener('pointerdown', onUserInteraction, { passive: true });
+  map.getContainer().addEventListener('wheel', onUserInteraction, { passive: true });
   map.on('zoomstart', function(e) {
     // 只检测用户手动缩放（非程序触发）
     // flyTo/flyToBounds 会触发 zoomstart，但不应标记为用户交互
     // 通过检查是否有正在进行的动画来区分
-    if (!animationConfig.isAnimating) {
+    if (!mapCameraIsProgrammatic) {
       onUserInteraction();
     }
   });
@@ -2437,28 +2660,30 @@ function initMapInteractionDetection() {
  */
 function initFollowModeSelector() {
   const selector = document.getElementById("follow-mode-selector");
-  if (!selector) return;
-
-  // 从 localStorage 恢复
-  try {
-    const saved = localStorage.getItem("cameraFollowMode");
-    if (saved && ["smart", "path", "off"].includes(saved)) {
-      cameraFollowMode = saved;
-    }
-  } catch (e) {}
-
-  // 兼容旧设置
+  const saved = readStoredPreference("cameraFollowMode");
+  // 新模式优先；只有缺少有效模式时才迁移旧版布尔设置。
+  cameraFollowMode = ["smart", "path", "off"].includes(saved)
+    ? saved
+    : readStoredPreference("cameraFollowEnabled") === "false" ? "off" : "smart";
   isCameraFollowEnabled = cameraFollowMode !== "off";
+  writeStoredPreference("cameraFollowMode", cameraFollowMode);
+  if (!selector) return;
 
   // 设置初始 UI 状态
   const buttons = selector.querySelectorAll(".follow-mode-btn");
   buttons.forEach((btn) => {
     btn.classList.toggle("active", btn.dataset.mode === cameraFollowMode);
+    btn.setAttribute("aria-pressed", String(btn.dataset.mode === cameraFollowMode));
     btn.addEventListener("click", () => {
-      buttons.forEach((b) => b.classList.remove("active"));
+      buttons.forEach((b) => {
+        b.classList.remove("active");
+        b.setAttribute("aria-pressed", "false");
+      });
       btn.classList.add("active");
+      btn.setAttribute("aria-pressed", "true");
       cameraFollowMode = btn.dataset.mode;
       isCameraFollowEnabled = cameraFollowMode !== "off";
+      stopPathFollowCamera();
 
       // 显示/隐藏缩放滑块（仅沿路模式下有意义）
       const zoomRow = document.getElementById("follow-zoom-row");
@@ -2466,9 +2691,7 @@ function initFollowModeSelector() {
         zoomRow.style.display = cameraFollowMode === "path" ? "flex" : "none";
       }
 
-      try {
-        localStorage.setItem("cameraFollowMode", cameraFollowMode);
-      } catch (e) {}
+      writeStoredPreference("cameraFollowMode", cameraFollowMode);
     });
   });
 
@@ -2487,23 +2710,18 @@ function initFollowZoomSlider() {
   const display = document.getElementById("follow-zoom-display");
   if (!slider) return;
 
-  // 从 localStorage 恢复
-  try {
-    const saved = localStorage.getItem("pathFollowZoom");
-    if (saved) {
-      pathFollowZoom = parseFloat(saved);
-      slider.value = pathFollowZoom;
-    }
-  } catch (e) {}
-
+  pathFollowZoom = normalizePreferenceNumber(readStoredPreference("pathFollowZoom"), 7, 5, 10, 0.5);
+  slider.value = String(pathFollowZoom);
+  writeStoredPreference("pathFollowZoom", pathFollowZoom);
   if (display) display.textContent = pathFollowZoom;
+  window.JourneyControls?.sync(slider);
 
   slider.addEventListener("input", (e) => {
-    pathFollowZoom = parseFloat(e.target.value);
+    pathFollowZoom = normalizePreferenceNumber(e.target.value, pathFollowZoom, 5, 10, 0.5);
+    slider.value = String(pathFollowZoom);
     if (display) display.textContent = pathFollowZoom;
-    try {
-      localStorage.setItem("pathFollowZoom", pathFollowZoom.toString());
-    } catch (e) {}
+    window.JourneyControls?.sync(slider);
+    writeStoredPreference("pathFollowZoom", pathFollowZoom);
   });
 }
 
@@ -2515,25 +2733,21 @@ function initPathSpeedMultiplier() {
   const display = document.getElementById("path-speed-display");
   if (!slider) return;
 
-  // 从 localStorage 恢复
-  try {
-    const saved = localStorage.getItem("pathSpeedMultiplier");
-    if (saved) {
-      pathSpeedMultiplier = parseFloat(saved);
-      slider.value = pathSpeedMultiplier;
-    }
-  } catch (e) {}
-
+  pathSpeedMultiplier = normalizePreferenceNumber(readStoredPreference("pathSpeedMultiplier"), 2.5, 1, 5, 0.5);
+  slider.value = String(pathSpeedMultiplier);
+  writeStoredPreference("pathSpeedMultiplier", pathSpeedMultiplier);
   if (display) display.textContent = pathSpeedMultiplier + "x";
+  window.JourneyControls?.sync(slider);
+  applySpeedPreset(currentSpeedLevel);
 
   slider.addEventListener("input", (e) => {
-    pathSpeedMultiplier = parseFloat(e.target.value);
+    pathSpeedMultiplier = normalizePreferenceNumber(e.target.value, pathSpeedMultiplier, 1, 5, 0.5);
+    slider.value = String(pathSpeedMultiplier);
     if (display) display.textContent = pathSpeedMultiplier + "x";
+    window.JourneyControls?.sync(slider);
     // 重新应用当前速度档位（倍率会自动生效）
     applySpeedPreset(currentSpeedLevel);
-    try {
-      localStorage.setItem("pathSpeedMultiplier", pathSpeedMultiplier.toString());
-    } catch (e) {}
+    writeStoredPreference("pathSpeedMultiplier", pathSpeedMultiplier);
   });
 }
 
@@ -2544,11 +2758,11 @@ function initPathSpeedMultiplier() {
 function startPathFollowCamera(motionPath) {
   stopPathFollowCamera();
 
-  if (!motionPath || cameraFollowMode !== "path") return;
+  if (!motionPath || cameraFollowMode !== "path" || prefersReducedMotion() || isUserInteracting) return;
 
   // 先设置缩放级别
   const currentCenter = map.getCenter();
-  map.setView(currentCenter, pathFollowZoom, { animate: true, duration: 0.5 });
+  withProgrammaticCamera(() => map.setView(currentCenter, pathFollowZoom, { animate: false }));
 
   // 获取路径坐标
   const pathCoords = motionPath._originalPathCoords;
@@ -2558,34 +2772,24 @@ function startPathFollowCamera(motionPath) {
   const duration = animationConfig.pathDuration;
 
   function followFrame(now) {
+    if (isUserInteracting || cameraFollowMode !== "path" || !motionPath._map) {
+      stopPathFollowCamera();
+      return;
+    }
     const elapsed = now - startTime;
     const progress = Math.min(elapsed / duration, 1);
 
     // 用 easing 匹配路径动画的节奏
     const easedProgress = easeInOutQuart(progress);
 
-    // 在路径坐标上插值出当前位置
-    const totalSegments = pathCoords.length - 1;
-    const segPos = easedProgress * totalSegments;
-    const segIndex = Math.min(Math.floor(segPos), totalSegments - 1);
-    const segFraction = segPos - segIndex;
-
-    const from = pathCoords[segIndex];
-    const to = pathCoords[Math.min(segIndex + 1, pathCoords.length - 1)];
-
-    const lat = from[0] + (to[0] - from[0]) * segFraction;
-    const lng = from[1] + (to[1] - from[1]) * segFraction;
-
-    // 平滑移动镜头到当前路径位置
-    map.panTo([lat, lng], {
-      animate: true,
-      duration: 0.15,
-      easeLinearity: 0.8,
-      noMoveStart: true,
-    });
+    // 与 motion 插件按实际路段距离插值，避免长短路段镜头和路径不同步。
+    const position = L.Motion.Utils.interpolateOnLine(map, pathCoords.map(point => L.latLng(point)), easedProgress);
+    if (position?.latLng) map.panTo(getJourneyCameraCenter(position.latLng), { animate: false, noMoveStart: true });
 
     if (progress < 1) {
       pathFollowAnimationId = requestAnimationFrame(followFrame);
+    } else {
+      pathFollowAnimationId = null;
     }
   }
 
@@ -2611,14 +2815,8 @@ function easeInOutQuart(t) {
 
 // 兼容旧代码调用
 function initCameraFollowControl() {
-  // 镜头跟随控制已移入设置面板
-  try {
-    const saved = localStorage.getItem("cameraFollowEnabled");
-    if (saved !== null) {
-      isCameraFollowEnabled = saved === "true";
-      if (!isCameraFollowEnabled) cameraFollowMode = "off";
-    }
-  } catch (e) {}
+  // 设置面板已统一恢复新旧偏好，不再让旧布尔值覆盖已恢复的模式。
+  isCameraFollowEnabled = cameraFollowMode !== "off";
 }
 
 function updateCameraFollowUI() {
@@ -2651,13 +2849,13 @@ function highlightEventPath(eventIndex) {
     };
 
     motionPath.setStyle({
-      color: "#e74c3c",
+      color: getRouteColor(true),
       weight: 5,
       opacity: 0.9,
       dashArray: "10, 0",
     });
 
-    motionPath.motionStart();
+    if (!prefersReducedMotion()) motionPath.motionStart();
 
     highlightedPaths.push({
       path: motionPath,
@@ -2680,7 +2878,7 @@ function highlightEventPath(eventIndex) {
         const bounds = motionPath.getBounds();
         if (bounds.isValid()) {
           map.fitBounds(bounds, {
-            padding: [50, 50],
+            ...getJourneyMapPadding(),
             maxZoom: 8,
             animate: true,
             duration: animationConfig.cameraFollowDuration / 1000, // 镜头时长
@@ -2707,7 +2905,7 @@ function clearPathHighlight() {
     if (path && path._map) {
       try {
         path.setStyle(originalStyle);
-        path.motionStart();
+        path.motionStop();
       } catch (error) {
         console.warn("恢复路径样式失败:", error);
       }
@@ -2738,7 +2936,7 @@ function quickClearPathHighlight() {
         setTimeout(() => {
           if (path && path._map) {
             path.setStyle(originalStyle);
-            path.motionStart();
+            path.motionStop();
           }
         }, 200);
       } catch (error) {
@@ -2792,14 +2990,14 @@ function updateCurrentEventInfo(event) {
 /**
  * 更新进度信息
  */
-function updateProgress() {
-  const progress = trajectoryData
-    ? ((currentEventIndex + 1) / trajectoryData.events.length) * 100
-    : 0;
+function updateProgress(index = currentEventIndex) {
+  const event = trajectoryData?.events[index];
+  if (!event) return;
+  const progress = ((index + 1) / trajectoryData.events.length) * 100;
 
   const mobileElements = {
     "current-progress-mobile": progress.toFixed(1) + "%",
-    "current-event-index-mobile": currentEventIndex + 1,
+    "current-event-index-mobile": index + 1,
   };
 
   Object.entries(mobileElements).forEach(([id, value]) => {
@@ -2811,8 +3009,8 @@ function updateProgress() {
 
   const desktopElements = {
     "current-progress-desktop": progress.toFixed(1) + "%",
-    "current-event-index-desktop": currentEventIndex + 1,
-    "current-age-desktop": trajectoryData.events[currentEventIndex].age,
+    "current-event-index-desktop": index + 1,
+    "current-age-desktop": event.age,
   };
 
   Object.entries(desktopElements).forEach(([id, value]) => {
@@ -2824,7 +3022,12 @@ function updateProgress() {
 
   const slider = document.getElementById("timeline-slider");
   if (slider && !slider.matches(":active")) {
-    slider.value = currentEventIndex;
+    slider.value = index;
+  }
+  if (slider) {
+    slider.setAttribute("aria-valuetext", `${event.date} · ${event.event}`);
+    slider.style.setProperty("--timeline-progress", `${trajectoryData.events.length > 1 ? index / (trajectoryData.events.length - 1) * 100 : 0}%`);
+    window.JourneyControls?.sync(slider);
   }
 }
 
@@ -2851,18 +3054,8 @@ function updateStatistics() {
 
   const visitedPlaces = new Set();
   events.forEach((event) => {
-    if (event.endLocation) {
-      let location = event.endLocation;
-      const provinceKeyword = locale === 'en' ? 'Province' : '省';
-      const cityKeyword = locale === 'en' ? 'City' : '市';
-
-      if (location.includes(provinceKeyword)) {
-        location = location.split(provinceKeyword)[0] + provinceKeyword;
-      } else if (location.includes(cityKeyword)) {
-        location = location.split(cityKeyword)[0] + cityKeyword;
-      }
-      visitedPlaces.add(location);
-    }
+    const location = event.coordinates?.end || event.coordinates?.start;
+    if (location) visitedPlaces.add(location.province || location.city || location.country);
   });
 
   const startYear = parseInt(events[0].date.split("-")[0]);
@@ -2891,24 +3084,61 @@ function updateStatistics() {
  * 切换播放/暂停状态
  */
 function togglePlay() {
-  const btn = document.getElementById("play-btn");
-  if (!btn) return;
-
+  if (!trajectoryData?.events.length) return;
   if (isPlaying) {
-    isPlaying = false;
-    if (playInterval) {
-      clearTimeout(playInterval);
-      playInterval = null;
-    }
-    btn.textContent = "▶";
-    btn.title = "播放";
+    stopPlayback();
   } else {
+    const restarting = currentEventIndex === trajectoryData.events.length - 1;
+    if (restarting) goToJourneyEvent(0);
     isPlaying = true;
-    btn.textContent = "⏸";
-    btn.title = "暂停";
-
-    playNextEvent();
+    updatePlaybackUI();
+    scheduleNextPlayback();
   }
+}
+
+function stopPlayback() {
+  isPlaying = false;
+  clearTimeout(playInterval);
+  playInterval = null;
+  clearTimeout(animationConfig._lockTimer);
+  animationConfig._lockTimer = null;
+  animationConfig.isAnimating = false;
+  stopPathFollowCamera();
+  motionPaths.get(currentEventIndex)?.motionStop();
+  updatePlaybackUI();
+}
+
+function updatePlaybackUI() {
+  const count = trajectoryData?.events.length || 0;
+  const isEnglish = i18n.getCurrentLocale() === "en";
+  const button = document.getElementById("play-btn");
+  if (button) {
+    const label = isPlaying ? (isEnglish ? "Pause" : "暂停") :
+      (count && currentEventIndex === count - 1 ? (isEnglish ? "Replay from the beginning" : "从头重播") : (isEnglish ? "Play" : "播放"));
+    button.innerHTML = window.JourneyIcons.svg(isPlaying ? 'pause' : count && currentEventIndex === count - 1 ? 'rotate-ccw' : 'play');
+    button.title = label;
+    button.setAttribute("aria-label", label);
+    button.setAttribute("aria-pressed", String(isPlaying));
+    button.disabled = !count;
+  }
+  const previous = document.getElementById("prev-btn");
+  const next = document.getElementById("next-btn");
+  if (previous) {
+    previous.disabled = !count || currentEventIndex === 0;
+    previous.setAttribute("aria-label", isEnglish ? "Previous event" : "上一个事件");
+  }
+  if (next) {
+    next.disabled = !count || currentEventIndex === count - 1;
+    next.setAttribute("aria-label", isEnglish ? "Next event" : "下一个事件");
+  }
+}
+
+function scheduleNextPlayback() {
+  clearTimeout(playInterval);
+  if (!isPlaying) return;
+  const preset = UNIFIED_SPEED_PRESETS[currentSpeedLevel];
+  const waitTime = prefersReducedMotion() ? preset.playInterval : Math.max(preset.playInterval, animationConfig.pathDuration + 200);
+  playInterval = setTimeout(playNextEvent, waitTime);
 }
 
 /**
@@ -2916,12 +3146,7 @@ function togglePlay() {
  */
 function playNextEvent() {
   if (!isPlaying || currentEventIndex >= trajectoryData.events.length - 1) {
-    isPlaying = false;
-    const btn = document.getElementById("play-btn");
-    if (btn) {
-      btn.textContent = "▶";
-      btn.title = "播放";
-    }
+    stopPlayback();
     return;
   }
 
@@ -2931,30 +3156,20 @@ function playNextEvent() {
   showEventAtIndex(nextIndex, true);
 
   if (isLastEvent) {
-    isPlaying = false;
-    const btn = document.getElementById("play-btn");
-    if (btn) {
-      btn.textContent = "▶";
-      btn.title = "播放";
-    }
-    showPoetryMessage();
+    stopPlayback();
+    showTemporaryMessage(i18n.getCurrentLocale() === "en" ? "You have reached the final event." : "已到达最后一条记录，可从头重播。", "info");
     return;
   }
 
   // 统一速度模型：等待时间 = 路径动画时长 + 缓冲，确保动画完成后再播下一个
-  const preset = UNIFIED_SPEED_PRESETS[currentSpeedLevel];
-  const waitTime = Math.max(preset.playInterval, animationConfig.pathDuration + 200);
-
-  playInterval = setTimeout(() => {
-    playNextEvent();
-  }, waitTime);
+  scheduleNextPlayback();
 }
 
 /**
  * 下一个事件
  */
 function nextEvent() {
-  if (currentEventIndex < trajectoryData.events.length - 1) {
+  if (trajectoryData && currentEventIndex < trajectoryData.events.length - 1) {
     showEventAtIndex(currentEventIndex + 1, true, true); // isUserAction=true
   }
 }
@@ -2963,7 +3178,7 @@ function nextEvent() {
  * 上一个事件
  */
 function previousEvent() {
-  if (currentEventIndex > 0) {
+  if (trajectoryData && currentEventIndex > 0) {
     showEventAtIndex(currentEventIndex - 1, true, true); // isUserAction=true
   }
 }
@@ -2974,6 +3189,9 @@ function previousEvent() {
  */
 function handleTimelineKeydown(e) {
   if (!trajectoryData || !trajectoryData.events) return;
+  if (e.defaultPrevented || e.altKey || e.ctrlKey || e.metaKey) return;
+  if (e.target?.closest?.('button, input, textarea, select, a, summary, .leaflet-container, [contenteditable]:not([contenteditable="false"]), [role="button"], [role="slider"]')) return;
+  if (document.querySelector('.music-modal.visible, .feedback-modal.visible, .wechat-qr-modal.visible, .location-detail-panel.visible, .settings-panel.visible, .drawer.visible, [role="dialog"].visible')) return;
 
   let newIndex = currentEventIndex;
   let handled = false;
@@ -3019,18 +3237,9 @@ function handleTimelineKeydown(e) {
  * 初始化动画控制（统一速度模型）
  */
 function initAnimationControls() {
-  // 从本地存储恢复速度档位
-  try {
-    const saved = localStorage.getItem("speedLevel");
-    if (saved !== null) {
-      const level = parseInt(saved);
-      if (level >= 0 && level < UNIFIED_SPEED_PRESETS.length) {
-        currentSpeedLevel = level;
-      }
-    }
-  } catch (error) {
-    console.warn("无法读取速度设置:", error);
-  }
+  const saved = readStoredPreference("speedLevel");
+  const level = saved === null || saved.trim() === "" ? NaN : Number(saved);
+  currentSpeedLevel = Number.isInteger(level) && level >= 0 && level < UNIFIED_SPEED_PRESETS.length ? level : 1;
 
   // 应用当前速度档位
   applySpeedPreset(currentSpeedLevel);
@@ -3040,7 +3249,7 @@ function initAnimationControls() {
  * 应用统一速度档位：自动联动路径、镜头、播放间隔
  */
 function applySpeedPreset(levelIndex) {
-  if (levelIndex < 0 || levelIndex >= UNIFIED_SPEED_PRESETS.length) return;
+  if (!Number.isInteger(levelIndex) || levelIndex < 0 || levelIndex >= UNIFIED_SPEED_PRESETS.length) return;
 
   const preset = UNIFIED_SPEED_PRESETS[levelIndex];
   currentSpeedLevel = levelIndex;
@@ -3056,40 +3265,22 @@ function applySpeedPreset(levelIndex) {
 
   // 更新所有速度相关 UI
   updateAllSpeedUI();
-
-  try {
-    localStorage.setItem("speedLevel", levelIndex.toString());
-  } catch (error) {
-    console.warn("无法保存速度设置:", error);
+  if (isPlaying) {
+    cancelJourneyAnimation();
+    updatePathsStatic(currentEventIndex);
+    scheduleNextPlayback();
   }
+
+  writeStoredPreference("speedLevel", levelIndex);
 }
 
 /**
  * 更新所有速度相关 UI 元素
  */
 function updateAllSpeedUI() {
-  const preset = UNIFIED_SPEED_PRESETS[currentSpeedLevel];
-
-  // PC端下拉选择器
-  const speedSelect = document.getElementById("custom-speed-select");
-  if (speedSelect) {
-    speedSelect.dataset.value = currentSpeedLevel.toString();
-    const selectText = speedSelect.querySelector(".select-text");
-    if (selectText) {
-      selectText.textContent = i18n.t(preset.name);
-    }
-    // 更新选中状态
-    const options = speedSelect.querySelectorAll(".select-option");
-    options.forEach((opt) => {
-      opt.classList.toggle("selected", parseInt(opt.dataset.value) === currentSpeedLevel);
-    });
-  }
-
-  // 移动端按钮组
-  const speedBtns = document.querySelectorAll(".speed-btn");
-  speedBtns.forEach((btn) => {
-    btn.classList.toggle("active", parseInt(btn.dataset.speed) === currentSpeedLevel);
-  });
+  const playbackSpeed = document.getElementById("playback-speed");
+  if (playbackSpeed) playbackSpeed.value = String(currentSpeedLevel);
+  window.JourneyControls?.sync(playbackSpeed);
 }
 
 // 兼容旧调用
@@ -3191,161 +3382,6 @@ function hideLoading() {
   if (loading) {
     loading.style.display = "none";
   }
-}
-
-// ==================== 自定义下拉选择器 ====================
-/**
- * 初始化自定义速度选择器
- */
-function initCustomSpeedSelect() {
-  const customSelect = document.getElementById("custom-speed-select");
-  if (!customSelect) return;
-
-  const selectDisplay = customSelect.querySelector(".select-display");
-  const selectText = customSelect.querySelector(".select-text");
-  const selectDropdown = customSelect.querySelector(".select-dropdown");
-  const selectOptions = customSelect.querySelectorAll(".select-option");
-
-  let isOpen = false;
-
-  function openDropdown() {
-    if (isOpen) return;
-
-    isOpen = true;
-    customSelect.classList.add("open");
-
-    setTimeout(() => {
-      document.addEventListener("click", handleDocumentClick);
-    }, 0);
-  }
-
-  function closeDropdown() {
-    if (!isOpen) return;
-
-    isOpen = false;
-    customSelect.classList.remove("open");
-    document.removeEventListener("click", handleDocumentClick);
-  }
-
-  function handleDocumentClick(e) {
-    if (!customSelect.contains(e.target)) {
-      closeDropdown();
-    }
-  }
-
-  function toggleDropdown(e) {
-    e.stopPropagation();
-    if (isOpen) {
-      closeDropdown();
-    } else {
-      openDropdown();
-    }
-  }
-
-  function selectOption(option) {
-    const value = parseInt(option.dataset.value);
-    const i18nKey = option.getAttribute('data-i18n');
-    const text = i18nKey ? i18n.t(i18nKey) : option.textContent;
-
-    selectText.textContent = text;
-
-    customSelect.dataset.value = value.toString();
-
-    selectOptions.forEach((opt) => opt.classList.remove("selected"));
-    option.classList.add("selected");
-
-    // 统一速度模型：直接应用速度档位
-    applySpeedPreset(value);
-
-    if (isPlaying) {
-      togglePlay();
-      setTimeout(() => togglePlay(), 100);
-    }
-
-    closeDropdown();
-  }
-
-  if (selectDisplay) {
-    selectDisplay.addEventListener("click", toggleDropdown);
-  }
-
-  selectOptions.forEach((option) => {
-    option.addEventListener("click", (e) => {
-      e.stopPropagation();
-      selectOption(option);
-    });
-  });
-
-  customSelect.addEventListener("keydown", (e) => {
-    if (!isOpen) {
-      if (e.key === "Enter" || e.key === " " || e.key === "ArrowDown") {
-        e.preventDefault();
-        openDropdown();
-      }
-    } else {
-      switch (e.key) {
-        case "Escape":
-          e.preventDefault();
-          closeDropdown();
-          break;
-        case "ArrowUp":
-          e.preventDefault();
-          navigateOptions(-1);
-          break;
-        case "ArrowDown":
-          e.preventDefault();
-          navigateOptions(1);
-          break;
-        case "Enter":
-          e.preventDefault();
-          const selectedOption = selectDropdown.querySelector(
-            ".select-option.selected"
-          );
-          if (selectedOption) {
-            selectOption(selectedOption);
-          }
-          break;
-      }
-    }
-  });
-
-  function navigateOptions(direction) {
-    const options = Array.from(selectOptions);
-    const currentIndex = options.findIndex((opt) =>
-      opt.classList.contains("selected")
-    );
-    let newIndex = currentIndex + direction;
-
-    if (newIndex < 0) newIndex = options.length - 1;
-    if (newIndex >= options.length) newIndex = 0;
-
-    options.forEach((opt) => opt.classList.remove("selected"));
-    options[newIndex].classList.add("selected");
-  }
-
-  customSelect.setAttribute("tabindex", "0");
-
-  // 用当前速度档位初始化选中状态
-  const initialOption = customSelect.querySelector(
-    `[data-value="${currentSpeedLevel}"]`
-  );
-  if (initialOption) {
-    const i18nKey = initialOption.getAttribute('data-i18n');
-    selectText.textContent = i18nKey ? i18n.t(i18nKey) : initialOption.textContent;
-    selectOptions.forEach((opt) => opt.classList.remove("selected"));
-    initialOption.classList.add("selected");
-  }
-
-  // 创建更新函数，供语言切换时调用
-  window.updateSpeedSelect = function() {
-    const currentOption = customSelect.querySelector(".select-option.selected");
-    if (currentOption) {
-      const i18nKey = currentOption.getAttribute('data-i18n');
-      if (i18nKey) {
-        selectText.textContent = i18n.t(i18nKey);
-      }
-    }
-  };
 }
 
 // ==================== 音乐播放功能 ====================
@@ -3625,6 +3661,8 @@ function selectSong(index, autoPlay = false) {
 
   currentMusicIndex = index;
   const song = MUSIC_PLAYLIST[index];
+  // 本地上传的 Blob 仅在本次会话有效，保留最后一次内置歌曲选择。
+  if (!song.isLocal) writeStoredPreference("mao-map:music-song", song.id);
 
   const titleEl = document.getElementById("current-song-title");
   const artistEl = document.getElementById("current-song-artist");
@@ -3662,8 +3700,10 @@ function toggleMusicPlay() {
     console.log("开始音乐播放");
     const playBtn = document.getElementById("music-play-btn");
     if (playBtn) {
-      playBtn.textContent = "⏳";
-      playBtn.title = "加载中...";
+      playBtn.innerHTML = window.JourneyIcons.svg('loader-circle');
+      playBtn.title = i18n.t('ui.timeline.loading');
+      playBtn.setAttribute('aria-label', playBtn.title);
+      playBtn.setAttribute('aria-busy', 'true');
     }
 
     if (musicAudio.readyState < 3) {
@@ -3856,7 +3896,9 @@ function initMusicPlaylist() {
   });
 
   if (MUSIC_PLAYLIST.length > 0) {
-    selectSong(0, false); // 默认选择第一首，但不自动播放
+    const savedSong = readStoredPreference("mao-map:music-song");
+    const savedIndex = MUSIC_PLAYLIST.findIndex(song => !song.isLocal && String(song.id) === savedSong);
+    selectSong(savedIndex >= 0 ? savedIndex : 0, false); // 恢复选择，仍保持暂停
   }
 }
 
@@ -3866,13 +3908,11 @@ function initMusicPlaylist() {
 function updatePlayButton() {
   const playBtn = document.getElementById("music-play-btn");
   if (playBtn) {
-    if (isMusicPlaying) {
-      playBtn.textContent = "⏸";
-      playBtn.title = "暂停";
-    } else {
-      playBtn.textContent = "▶";
-      playBtn.title = "播放";
-    }
+    playBtn.innerHTML = window.JourneyIcons.svg(isMusicPlaying ? 'pause' : 'play');
+    playBtn.title = i18n.t(isMusicPlaying ? 'ui.controls.pause' : 'ui.controls.play');
+    playBtn.setAttribute('aria-label', playBtn.title);
+    playBtn.setAttribute('aria-pressed', String(isMusicPlaying));
+    playBtn.setAttribute('aria-busy', 'false');
   }
 }
 
@@ -3995,6 +4035,7 @@ function initVolumeControl() {
     });
 
     volumeSlider.value = musicVolume * 100;
+    window.JourneyControls?.sync(volumeSlider);
   }
 
   if (volumeValue) {
@@ -4006,22 +4047,23 @@ function initVolumeControl() {
  * 设置音乐音量
  */
 function setMusicVolume(volume) {
-  musicVolume = Math.max(0, Math.min(1, volume));
+  musicVolume = normalizePreferenceNumber(volume, musicVolume, 0, 1, 0.01);
 
   if (musicAudio) {
     musicAudio.volume = musicVolume;
   }
 
+  const volumeSlider = document.getElementById("music-volume-slider");
+  if (volumeSlider) {
+    volumeSlider.value = String(Math.round(musicVolume * 100));
+    window.JourneyControls?.sync(volumeSlider);
+  }
   const volumeValue = document.getElementById("music-volume-value");
   if (volumeValue) {
     volumeValue.textContent = Math.round(musicVolume * 100) + "%";
   }
 
-  try {
-    localStorage.setItem("musicVolume", musicVolume.toString());
-  } catch (error) {
-    console.warn("无法保存音量设置:", error);
-  }
+  writeStoredPreference("musicVolume", musicVolume);
 }
 
 /**
@@ -4080,15 +4122,7 @@ function handleMusicFileUpload(e) {
  * 从本地存储恢复音乐设置
  */
 function restoreMusicSettings() {
-  try {
-    const savedVolume = localStorage.getItem("musicVolume");
-    if (savedVolume !== null) {
-      musicVolume = parseFloat(savedVolume);
-      setMusicVolume(musicVolume);
-    }
-  } catch (error) {
-    console.warn("无法读取音乐设置:", error);
-  }
+  setMusicVolume(normalizePreferenceNumber(readStoredPreference("musicVolume"), 0.5, 0, 1, 0.01));
 }
 
 /**
@@ -4351,30 +4385,34 @@ function bindEvents() {
 
   const slider = document.getElementById("timeline-slider");
   if (slider) {
-    slider.addEventListener("mousedown", () => {
-      isDragging = true;
-    });
-
-    slider.addEventListener("touchstart", () => {
-      isDragging = true;
-    });
-
-    slider.addEventListener("mouseup", () => {
-      if (isDragging) {
-        isDragging = false;
-        const finalIndex = parseInt(slider.value);
-        // 松手后执行完整更新（含路径重建和镜头跟随）
-        showEventAtIndex(finalIndex, false, true);
+    let dragPointerId = null;
+    function finishDrag(commit) {
+      if (!isDragging) return;
+      const index = Number(slider.value);
+      isDragging = false;
+      const pointerId = dragPointerId;
+      dragPointerId = null;
+      if (pointerId !== null && slider.hasPointerCapture?.(pointerId)) slider.releasePointerCapture(pointerId);
+      if (commit) goToJourneyEvent(index);
+      else {
+        slider.value = currentEventIndex;
+        updateCurrentEventInfo(trajectoryData.events[currentEventIndex]);
+        updateProgress();
+        publishJourneyEvent();
       }
+    }
+    slider.addEventListener("pointerdown", (event) => {
+      if (!trajectoryData || event.button !== 0) return;
+      stopPlayback();
+      isDragging = true;
+      dragPointerId = event.pointerId;
+      slider.setPointerCapture?.(event.pointerId);
     });
-
-    slider.addEventListener("touchend", () => {
-      if (isDragging) {
-        isDragging = false;
-        const finalIndex = parseInt(slider.value);
-        showEventAtIndex(finalIndex, false, true);
-      }
-    });
+    slider.addEventListener("pointerup", () => finishDrag(true));
+    slider.addEventListener("pointercancel", () => finishDrag(false));
+    slider.addEventListener("lostpointercapture", () => finishDrag(false));
+    slider.addEventListener("blur", () => finishDrag(false));
+    window.addEventListener("blur", () => finishDrag(false));
 
     slider.addEventListener("input", (e) => {
       if (trajectoryData) {
@@ -4385,7 +4423,7 @@ function bindEvents() {
           updateDragPreview(newIndex);
         } else {
           // 非拖动（如键盘方向键触发的 input）：完整更新
-          showEventAtIndex(newIndex, true, true);
+          goToJourneyEvent(newIndex);
         }
       }
     });
@@ -4395,16 +4433,8 @@ function bindEvents() {
       copyCurrentEventData();
     });
 
-    slider.addEventListener("keydown", (e) => {
-      handleTimelineKeydown(e);
-    });
-
-    slider.addEventListener("focus", () => {
-      slider.style.outline = "none";
-    });
-
-    slider.addEventListener("click", () => {
-      slider.focus();
+    slider.addEventListener("change", () => {
+      if (!isDragging && Number(slider.value) !== currentEventIndex) goToJourneyEvent(Number(slider.value));
     });
   }
 
@@ -4426,21 +4456,12 @@ function bindEvents() {
     }
   });
 
-  initCustomSpeedSelect();
-
-  const speedBtns = document.querySelectorAll(".speed-btn");
-  speedBtns.forEach((btn) => {
-    btn.addEventListener("click", (e) => {
-      // 统一速度模型：data-speed 现在是档位索引
-      const level = parseInt(btn.dataset.speed);
-      applySpeedPreset(level);
-
-      if (isPlaying) {
-        togglePlay();
-        setTimeout(() => togglePlay(), 100);
-      }
+  const playbackSpeed = document.getElementById("playback-speed");
+  if (playbackSpeed) {
+    playbackSpeed.addEventListener("change", () => {
+      applySpeedPreset(Number(playbackSpeed.value));
     });
-  });
+  }
 
   initAnimationControls();
   initStatsHover();
@@ -4465,8 +4486,9 @@ function bindEvents() {
     } else {
       mapEl.classList.remove("panel-hidden", "panel-visible");
       isPanelVisible = true;
-      document.getElementById("timeline-control").classList.remove("hidden");
+      document.getElementById("timeline-control")?.classList.remove("hidden");
     }
+    map?.invalidateSize({ animate: false, pan: false });
   });
 }
 
@@ -4507,37 +4529,15 @@ async function initApp() {
     trajectoryData = await loadTrajectoryData();
 
     if (trajectoryData && trajectoryData.events.length > 0) {
-      const slider = document.getElementById("timeline-slider");
-      if (slider) {
-        slider.max = trajectoryData.events.length - 1;
-        slider.style.transition = `all ${animationConfig.timelineDuration}ms ease`;
-      }
-
-      const totalCountEls = document.querySelectorAll(
-        "[id^='total-event-count']"
-      );
-      totalCountEls.forEach((el) => {
-        if (el) el.textContent = trajectoryData.events.length;
-      });
-
+      syncTimelineBounds();
+      publishJourneyData();
       updateStatistics();
-      showEventAtIndex(0, false);
-
-      setTimeout(() => {
-        optimizeMotionPerformance();
-
-        if (motionLoaded) {
-          preloadKeyAnimations();
-        }
-
-        const performanceMonitor = monitorMotionPerformance();
-        window.motionPerformanceMonitor = performanceMonitor;
-      }, 1500);
+      bindEvents();
+      showEventAtIndex(0, false, true);
     } else {
       throw new Error("轨迹数据为空");
     }
 
-    bindEvents();
     hideLoading();
 
     const mapEl = document.getElementById("map");
@@ -4546,6 +4546,9 @@ async function initApp() {
     }
 
     window.addEventListener("beforeunload", () => {
+      stopPlayback();
+      clearTimeout(userInteractionTimeout);
+      clearTimeout(mapCameraTimeout);
       forceStopPoetryAnimation();
 
       cleanupMotionResources();
@@ -4563,13 +4566,16 @@ async function initApp() {
 
     const loading = document.getElementById("loading");
     if (loading) {
+      const isEnglish = i18n.getCurrentLocale() === "en";
       loading.innerHTML = `
-        <div class="error">
-          <h3>加载失败</h3>
-          <p>应用初始化时出现错误，请刷新页面重试。</p>
-          <p>错误信息: ${error.message}</p>
+        <div class="error" role="alert">
+          <h3>${isEnglish ? "Unable to load the journey" : "足迹资料暂未加载成功"}</h3>
+          <p>${isEnglish ? "Check your connection, then try again." : "请检查网络连接后重试。"}</p>
+          <details><summary>${isEnglish ? "Details" : "查看原因"}</summary><p>${escapeHtml(error.message)}</p></details>
+          <button id="loading-retry-btn" type="button">${isEnglish ? "Retry" : "重新加载"}</button>
         </div>
       `;
+      document.getElementById("loading-retry-btn")?.addEventListener("click", () => window.location.reload());
     }
   }
 }
