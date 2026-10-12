@@ -91,6 +91,9 @@ jobs:
       - name: 安装 Android SDK
         if: matrix.target_name == 'android'
         uses: android-actions/setup-android@v3
+        with:
+          packages: platform-tools
+          log-accepted-android-sdk-licenses: false
 
       - name: 安装 Android SDK 组件
         if: matrix.target_name == 'android'
