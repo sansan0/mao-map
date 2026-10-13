@@ -211,3 +211,24 @@ body[data-skin="classic"] ::-webkit-scrollbar-thumb:hover { background: rgba(127
 body[data-skin="classic"] .titlebar-btn:active { background: rgba(0, 0, 0, .1); }
 body[data-skin="classic"] .titlebar-close:hover { background: #e81123; color: #fff; }
 body[data-skin="classic"] .titlebar-close:active { background: #c50f1f; color: #fff; }
+
+/* Music changes the player surfaces, without replacing the user's chosen skin. */
+body[data-skin="classic"] .music-playing {
+  --color-accent: #b56152;
+  --color-accent-ink: #8e473b;
+  --color-accent-hover: #a65345;
+  --accent-tint: 181 97 82;
+  --color-accent-border: rgb(181 97 82 / 22%);
+  --play-gradient: linear-gradient(135deg, #c37766, #a65345);
+}
+body[data-skin="paper"] .music-playing {
+  --color-accent: #a65343;
+  --color-accent-ink: #823d30;
+  --color-accent-hover: #964638;
+  --accent-tint: 166 83 67;
+  --color-accent-border: rgb(166 83 67 / 24%);
+  --play-gradient: linear-gradient(135deg, #b65f4d, #994635);
+}
+.music-playing { --color-accent-soft: rgb(var(--accent-tint) / calc(var(--glass-alpha) * .14)); }
+body[data-skin="paper"] :is(#playback-dock, #music-modal).music-playing { box-shadow: inset 0 0 0 100vmax rgb(166 83 67 / 8%), var(--shadow-dialog); }
+body[data-skin="paper"][data-view-mode="browse"] #timeline-control.music-playing { box-shadow: inset 0 0 0 100vmax rgb(166 83 67 / 8%); }

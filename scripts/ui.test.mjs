@@ -5,6 +5,7 @@ import path from 'node:path';
 import { createApp, projectRoot, readProjectJSON, until } from './test-support/app-harness.mjs';
 
 const plain = (value) => JSON.parse(JSON.stringify(value));
+const nextFrame = (app) => new Promise((resolve) => app.window.requestAnimationFrame(resolve));
 const savedPreferences = (app) => Object.fromEntries(Object.keys(app.window.localStorage).map((key) => [key, app.window.localStorage.getItem(key)]));
 const openApp = async (t, options) => {
   const app = await createApp(options);
@@ -64,6 +65,246 @@ const assertLucide = (element, name) => {
   assert.equal(icon.querySelector('image, use'), null, 'the icon does not fetch an external image or sprite');
   return icon;
 };
+
+test('song preludes repeat when switching tracks, wait for playback and stay quiet on resume', async (t) => {
+  const app = await openApp(t, { reducedMotion: false });
+  const api = app.window.JourneyMap;
+  api.goTo(38);
+  app.$('#music-btn').click();
+  await until(() => app.$('#music-modal').contains(app.document.activeElement), 'music dialog focus');
+  const audio = app.$('#music-audio');
+  const prelude = app.$('#music-prelude');
+  const dots = () => app.$$('.leaflet-journey-moments-pane .moment-star');
+  Object.defineProperty(audio, 'readyState', { configurable: true, get: () => 4 });
+  audio.dispatchEvent(new app.window.Event('loadedmetadata'));
+  assert.equal(prelude.hidden, true, 'opening the player or preparing audio does not start the artwork');
+  app.$('#music-play-btn').click();
+  await until(() => !prelude.hidden, 'first song prelude');
+  assert.equal(prelude.dataset.song, 'internationale');
+  await until(() => dots().length > 0, 'the first visited place lights up');
+  assert.equal(api.getCurrentIndex(), 38);
+  assert.equal(api.isPlaying(), false, 'the song never starts timeline playback');
+  const visited = new Set(api.getEvents().slice(0, 39).flatMap(event => [event.startCoords, ...event.transitCoords, event.endCoords]).filter(Boolean).map(([lng, lat]) => `${lat},${lng}`));
+  const marked = app.evaluate('Object.values(map._layers).filter(layer => layer instanceof L.CircleMarker && layer.options.pane === "journey-moments").map(layer => [layer.getLatLng().lat, layer.getLatLng().lng])');
+  assert.ok(marked.every(point => visited.has(point.join(','))), 'stars use only visited coordinates');
+  audio.dispatchEvent(new app.window.Event('pause'));
+  assert.equal(prelude.hidden, true);
+  assert.equal(dots().length, 0);
+  await new Promise(resolve => setTimeout(resolve, 350));
+  assert.equal(dots().length, 0, 'canceled star timers cannot reappear');
+  audio.dispatchEvent(new app.window.Event('playing'));
+  assert.equal(prelude.hidden, true, 'resume does not replay the opening');
+  app.$$('#music-playlist-items .playlist-item')[1].click();
+  assert.equal(prelude.hidden, true, 'a selected but loading song has no prelude');
+  audio.dispatchEvent(new app.window.Event('canplaythrough'));
+  await until(() => prelude.dataset.song === 'dongfanghong', 'sunrise prelude');
+  assert.equal(dots().length, 0, 'the second song uses its own artwork');
+  await until(() => prelude.hidden, 'the short opening ends by itself', 3500);
+  assert.equal(app.evaluate('isMusicPlaying'), true, 'finishing the effect keeps the audio playing');
+  app.$('#music-prev-btn').click();
+  assert.equal(prelude.hidden, true, 'switching back waits for the selected audio to load');
+  audio.dispatchEvent(new app.window.Event('canplaythrough'));
+  await until(() => prelude.dataset.song === 'internationale', 'returning to a heard song starts its opening again');
+  await until(() => dots().length > 0, 'returning stars');
+  app.$('#music-next-btn').click();
+  assert.equal(dots().length, 0, 'switching during an opening removes the previous song’s stars');
+  audio.dispatchEvent(new app.window.Event('canplaythrough'));
+  await until(() => prelude.dataset.song === 'dongfanghong', 'quick switch repeats the other opening');
+  app.$('#music-play-btn').click();
+  assert.equal(prelude.hidden, true);
+  app.$('#music-play-btn').click();
+  await until(() => app.evaluate('isMusicPlaying'), 'resumed playback');
+  assert.equal(prelude.hidden, true, 'resuming the same selection does not replay the opening');
+  app.$('#music-modal-close').click();
+  await nextFrame(app);
+  app.$('#music-btn').click();
+  await nextFrame(app);
+  assert.equal(prelude.hidden, true, 'reopening the player does not count as a song change');
+  app.$('#music-play-btn').click();
+  app.$('#music-prev-btn').click();
+  audio.dispatchEvent(new app.window.Event('canplaythrough'));
+  await nextFrame(app);
+  assert.equal(app.evaluate('isMusicPlaying'), false);
+  assert.equal(prelude.hidden, true, 'changing tracks while paused does not start an opening');
+  app.$('#music-play-btn').click();
+  await until(() => prelude.dataset.song === 'internationale', 'the new paused selection gets its opening when played');
+  assert.deepEqual(app.errors, []);
+});
+
+test('reduced-motion music uses static visited stars and local uploads have no historical prelude', async (t) => {
+  const app = await openApp(t);
+  app.window.JourneyMap.goTo(45);
+  const audio = app.$('#music-audio');
+  Object.defineProperty(audio, 'readyState', { configurable: true, get: () => 4 });
+  audio.dispatchEvent(new app.window.Event('loadedmetadata'));
+  app.$('#music-play-btn').click();
+  await until(() => !app.$('#music-prelude').hidden, 'static music artwork');
+  assert.equal(app.$$('.leaflet-journey-moments-pane .moment-star').length, 8, 'all stars are drawn immediately without movement');
+  const last = app.evaluate('Object.values(map._layers).filter(layer => layer instanceof L.CircleMarker && layer.options.pane === "journey-moments").at(-1).getLatLng()');
+  const [lng, lat] = app.window.JourneyMap.getEvents()[45].endCoords;
+  assert.deepEqual([last.lat, last.lng], [lat, lng], 'the final star is the current destination');
+  const upload = app.$('#music-file-input');
+  Object.defineProperty(upload, 'files', { configurable: true, value: [new app.window.File(['audio fixture'], '自选曲.ogg', { type: 'audio/ogg' })] });
+  upload.dispatchEvent(new app.window.Event('change', { bubbles: true }));
+  audio.dispatchEvent(new app.window.Event('loadedmetadata'));
+  app.$('#music-play-btn').click();
+  await until(() => app.evaluate('isMusicPlaying'), 'local audio playback');
+  assert.equal(app.$('#music-prelude').hidden, true);
+  assert.equal(app.$$('.leaflet-journey-moments-pane .moment-star').length, 0);
+  app.$$('#music-playlist-items .playlist-item')[0].click();
+  audio.dispatchEvent(new app.window.Event('canplaythrough'));
+  await until(() => app.$('#music-prelude').dataset.song === 'internationale', 'return from a local upload');
+  assert.equal(app.$$('.leaflet-journey-moments-pane .moment-star').length, 8);
+  assert.deepEqual(app.errors, []);
+});
+
+test('place keepsakes ignore previews, stamp a first committed visit and open the dated archive', async (t) => {
+  const app = await openApp(t, { reducedMotion: false });
+  const api = app.window.JourneyMap;
+  const stamp = app.$('#trail-stamp');
+  assert.equal(app.$('#trail-stamp-place').textContent, '韶山');
+  assert.equal(app.$('#trail-stamp-year').textContent, '1893');
+  stamp.dispatchEvent(new app.window.Event('animationend'));
+  const target = api.getEvents().findIndex(event => event.date === '1927-10-27');
+  const slider = app.$('#timeline-slider');
+  app.pointer(slider, 'pointerdown');
+  app.input(slider, String(target));
+  await nextFrame(app);
+  assert.equal(stamp.hidden, true, 'scrubbing cannot collect a place');
+  app.pointer(slider, 'pointercancel');
+  api.goTo(target);
+  assert.equal(app.$('#trail-stamp-place').textContent, '井冈山');
+  assert.equal(stamp.classList.contains('is-new'), true, 'previewing did not consume the first arrival');
+  stamp.dispatchEvent(new app.window.Event('animationend'));
+  api.goTo(0);
+  api.goTo(target);
+  assert.equal(stamp.classList.contains('is-new'), false, 'return visits retain a quiet mark');
+  api.setRouteScope('current');
+  stamp.focus();
+  stamp.click();
+  await until(() => app.$('#location-detail-panel').contains(app.document.activeElement), 'stamp opens the location archive');
+  assert.match(app.$('#panel-location-title').textContent, /井冈山/);
+  assert.ok(app.$$('#panel-content .event-select').length > 0);
+  app.$('#panel-close-btn').click();
+  await until(() => app.document.activeElement === stamp, 'stamp focus restored');
+  api.goTo(api.getEvents().findIndex(event => event.date === '1935-10-19'));
+  assert.equal(stamp.hidden, true, 'Wuqi is not mislabeled as a visit to Yan’an city');
+  api.goTo(api.getEvents().findIndex(event => event.date === '1937-01-13'));
+  assert.equal(app.$('#trail-stamp-place').textContent, '延安');
+  assert.deepEqual(app.errors, []);
+});
+
+test('poetry bookmarks open only on related records, cite their dates and preserve accessible dialog behavior', async (t) => {
+  const app = await openApp(t, { entry: 'tauri.html', nativeAndroid: true, width: 390 });
+  const api = app.window.JourneyMap;
+  const button = app.$('#trail-poem-open');
+  const dialog = app.$('#trail-poem-modal');
+  assert.equal(button.hidden, true);
+  for (const [date, title, year] of [
+    ['1927-01-04', '沁园春·长沙', '1925'],
+    ['1927-09-29', '西江月·秋收起义', '1927'],
+    ['1935-10-19', '七律·长征', '1935.10'],
+  ]) {
+    const position = api.getEvents().findIndex(event => event.date === date);
+    api.goTo(position - 1);
+    assert.equal(button.hidden, true, 'the excerpt is not attached to an earlier record');
+    api.goTo(position);
+    assert.equal(button.hidden, false);
+    assert.equal(dialog.classList.contains('visible'), false, 'poems wait for an intentional click');
+    button.focus();
+    button.click();
+    assert.equal(dialog.classList.contains('visible'), true);
+    assert.equal(app.$('#trail-poem-heading').textContent, title);
+    assert.ok(app.$('#trail-poem-date').textContent.includes(year));
+    assert.equal(app.$$('#trail-poem-quote .poetry-line').length, 2);
+    assert.match(app.$('#trail-poem-source').href, /^https:\/\/[^/]+\.people\.com\.cn\//);
+    assert.equal(app.$('#trail-poem-source').rel, 'noopener noreferrer');
+    assert.equal(app.$('#map').inert, true);
+    app.$('#trail-poem-return').focus();
+    app.key(app.document.activeElement, 'Tab');
+    assert.equal(app.document.activeElement, app.$('#trail-poem-close'));
+    app.key(app.document.activeElement, 'ArrowRight');
+    assert.equal(api.getCurrentIndex(), position);
+    app.key(app.document.activeElement, 'Escape');
+    assert.equal(dialog.inert, true);
+    assert.equal(app.$('#trail-poem-backdrop').classList.contains('visible'), false);
+    assert.equal(app.document.activeElement, button);
+  }
+  assert.deepEqual(app.errors, []);
+});
+
+test('the finale overview includes every recorded stop on a small screen and restores the map on exit', async (t) => {
+  const app = await openApp(t, { width: 390, nativeAndroid: true, entry: 'tauri.html' });
+  const api = app.window.JourneyMap;
+  const map = app.evaluate('map');
+  const tileLayer = app.tileLayers[0];
+  api.goTo(api.getEvents().length - 1);
+  await until(() => app.$('#poetry-modal').classList.contains('visible'), 'finale');
+  api.setRouteScope('current');
+  const savedCenter = plain(map.getCenter());
+  const savedZoom = map.getZoom();
+  const preferences = savedPreferences(app);
+  app.$('#poetry-recall').click();
+  assert.equal(app.$('#poetry-modal').classList.contains('visible'), false);
+  assert.equal(app.$('#map').inert, false);
+  assert.equal(app.$('#journey-recollection').dataset.state, 'complete', 'reduced motion unfolds everything immediately');
+  assert.equal(app.$('#recollection-years').textContent, '1893 — 1976');
+  assert.equal(app.document.activeElement, app.$('#recollection-close'));
+  const points = api.getEvents().flatMap(event => [event.startCoords, ...event.transitCoords, event.endCoords]).filter(Boolean);
+  assert.ok(points.every(([lng, lat]) => map.getBounds().contains([lat, lng])), 'even international visits fit inside the view');
+  assert.ok(map.getZoom() < 4);
+  assert.equal(tileLayer._tileZoom, 4, 'wide views reuse valid tiles instead of requesting blank low-zoom images');
+  assert.equal(api.getCurrentIndex(), 108);
+  assert.equal(api.getRouteScope(), 'current');
+  assert.deepEqual(savedPreferences(app), preferences, 'reflection does not overwrite display preferences');
+  assert.ok(app.$$('.leaflet-journey-moments-pane .moment-route').length > 0);
+  app.key(app.document.activeElement, 'Escape');
+  assert.equal(app.$('#journey-recollection').hidden, true);
+  assert.equal(app.$$('.leaflet-journey-moments-pane path').length, 0);
+  assert.equal(map.getMinZoom(), 4);
+  assert.equal(tileLayer.options.minZoom, 4);
+  assert.equal(tileLayer.options.minNativeZoom, undefined);
+  assert.equal(map.getZoom(), savedZoom);
+  assert.deepEqual(plain(map.getCenter()), savedCenter);
+  assert.equal(app.document.activeElement, app.$('#poetry-open'));
+  assert.deepEqual(app.errors, []);
+});
+
+test('animated reflection cancels cleanly on map input, navigation and another dialog', async (t) => {
+  const app = await openApp(t, { reducedMotion: false });
+  const api = app.window.JourneyMap;
+  const map = app.evaluate('map');
+  const last = api.getEvents().length - 1;
+  const start = async () => {
+    api.goTo(last);
+    if (!app.$('#poetry-modal').classList.contains('visible')) app.$('#poetry-open').click();
+    await until(() => app.$('#poetry-modal').classList.contains('visible'), 'open finale');
+    app.$('#poetry-recall').click();
+    assert.equal(app.$('#journey-recollection').dataset.state, 'drawing');
+  };
+  await start();
+  await until(() => app.$('.leaflet-journey-moments-pane .moment-star'), 'first animated stop');
+  app.pointer(app.$('#map'), 'pointerdown');
+  assert.equal(app.$('#journey-recollection').hidden, true);
+  await new Promise(resolve => setTimeout(resolve, 650));
+  assert.equal(app.$$('.leaflet-journey-moments-pane path').length, 0, 'queued frames cannot repaint after cancellation');
+  await start();
+  api.goTo(0);
+  assert.equal(app.$('#journey-recollection').hidden, true);
+  assert.equal(api.getCurrentIndex(), 0);
+  assert.equal(map.getMinZoom(), 4);
+  const [lng, lat] = api.getEvents()[0].endCoords;
+  assert.ok(map.getBounds().contains([lat, lng]), 'closing the old overview cannot overwrite the new destination');
+  await start();
+  app.$('#settings-btn').click();
+  await until(() => app.$('#settings-panel').contains(app.document.activeElement), 'settings takes focus');
+  assert.equal(app.$('#journey-recollection').hidden, true);
+  assert.equal(app.$$('.leaflet-journey-moments-pane path').length, 0);
+  app.$('#settings-panel-close').click();
+  await nextFrame(app);
+  assert.equal(app.$('#journey-recollection').hidden, true, 'closing another dialog does not restart reflection');
+  assert.deepEqual(app.errors, []);
+});
 
 test('HTML and Tauri entries initialize the same local Chinese application', async (t) => {
   const sharedIds = [];
@@ -177,6 +418,74 @@ test('timeline and music icons follow loading, play, pause and replay without lo
   assert.match(music.getAttribute('aria-label'), /播放/);
   assert.equal(app.evaluate('isMusicPlaying'), false);
   assert.deepEqual(app.errors, []);
+});
+
+test('music restores the red surface tint across modes, skins and shared entries', async (t) => {
+  for (const entry of ['index.html', 'tauri.html']) {
+    const app = await openApp(t, { entry, width: 390 });
+    const audio = app.$('#music-audio');
+    Object.defineProperty(audio, 'readyState', { configurable: true, get: () => 4 });
+    audio.dispatchEvent(new app.window.Event('loadedmetadata'));
+    const play = app.$('#music-play-btn');
+    for (const skin of ['paper', 'classic']) {
+      setSkin(app, skin);
+      play.click();
+      await until(() => app.evaluate('isMusicPlaying'), 'music playing');
+      const activeAccent = skin === 'classic' ? '#b56152' : '#a65343';
+      const activeTint = skin === 'classic' ? /181 97 82 \/ 6%/ : /166 83 67 \/ 8%/;
+      for (const mode of ['playback', 'browse']) {
+        setViewMode(app, mode);
+        const surface = app.$(mode === 'playback' ? '#playback-dock' : '#timeline-control');
+        assert.equal(surface.classList.contains('music-playing'), true);
+        const style = app.window.getComputedStyle(surface);
+        assert.match(style.boxShadow, activeTint, `${skin} ${mode} uses its own red tint below the content`);
+        assert.equal(style.getPropertyValue('--color-accent').trim(), activeAccent, 'blue becomes red and paper red deepens');
+        assert.equal(app.window.getComputedStyle(app.$('#music-modal')).getPropertyValue('--color-accent').trim(), activeAccent);
+        assert.equal(app.document.body.dataset.skin, skin, 'music does not replace the selected skin');
+        assert.equal(app.evaluate('isMusicPlaying'), true, 'changing the surface preserves the music');
+      }
+      const alternateSkin = skin === 'paper' ? 'classic' : 'paper';
+      setSkin(app, alternateSkin);
+      assert.equal(app.window.getComputedStyle(app.$('#timeline-control')).getPropertyValue('--color-accent').trim(), alternateSkin === 'classic' ? '#b56152' : '#a65343');
+      assert.equal(app.evaluate('isMusicPlaying'), true, 'live skin changes retain the music state');
+      setSkin(app, skin);
+      play.click();
+      for (const id of ['playback-dock', 'timeline-control', 'music-modal', 'music-btn']) assert.equal(app.$(`#${id}`).classList.contains('music-playing'), false);
+      assert.doesNotMatch(app.window.getComputedStyle(app.$('#timeline-control')).boxShadow, /6%|8%/);
+      assert.equal(app.document.body.dataset.skin, skin);
+    }
+    assert.deepEqual(app.errors, []);
+  }
+});
+
+test('music tint clears on track loading, native pause, playback failure and ending', async (t) => {
+  const app = await openApp(t);
+  const audio = app.$('#music-audio');
+  Object.defineProperty(audio, 'readyState', { configurable: true, get: () => 4 });
+  audio.dispatchEvent(new app.window.Event('loadedmetadata'));
+  const tinted = () => app.$('#playback-dock').classList.contains('music-playing');
+  app.$('#music-play-btn').click();
+  await until(tinted, 'initial music tint');
+  app.$$('#music-playlist-items .playlist-item')[1].click();
+  assert.equal(tinted(), false, 'a loading track is not yet playing');
+  audio.dispatchEvent(new app.window.Event('canplaythrough'));
+  await until(tinted, 'automatic play after changing tracks');
+  audio.dispatchEvent(new app.window.Event('pause'));
+  assert.equal(tinted(), false, 'system media pause clears the tint');
+  audio.dispatchEvent(new app.window.Event('playing'));
+  assert.equal(tinted(), true, 'system media resume restores the tint');
+  audio.dispatchEvent(new app.window.Event('error'));
+  assert.equal(tinted(), false, 'a media error clears the tint');
+  audio.play = () => Promise.reject(new Error('test playback rejection'));
+  app.$('#music-play-btn').click();
+  await until(() => app.$('#music-play-btn').getAttribute('aria-busy') === 'false', 'failed playback settles');
+  assert.equal(tinted(), false);
+  audio.dispatchEvent(new app.window.Event('playing'));
+  audio.dispatchEvent(new app.window.Event('ended'));
+  assert.equal(tinted(), false, 'ending clears the tint while waiting for the next song');
+  assert.equal(app.evaluate('isMusicPlaying'), false);
+  assert.equal(app.errors.length, 2);
+  assert.ok(app.errors.every(error => /音频播放错误|音频播放失败/.test(String(error))));
 });
 
 test('native desktop titlebar icons and accessible labels follow maximize and restore commands', async (t) => {
@@ -1335,6 +1644,145 @@ test('playback reaches the final record, offers replay and stops when an event i
   assert.equal(api.isPlaying(), false);
   assert.equal(app.evaluate('playInterval'), null);
   assert.equal(api.getCurrentIndex(), 15);
+  assert.deepEqual(app.errors, []);
+});
+
+test('playback completion opens the original poetry finale on web and native compact layouts', async (t) => {
+  const poems = (await readProjectJSON('i18n/zh-CN.json')).poems;
+  for (const options of [{ entry: 'index.html' }, { entry: 'tauri.html', nativeAndroid: true, width: 390 }]) {
+    const app = await openApp(t, options);
+    const api = app.window.JourneyMap;
+    api.goTo(api.getEvents().length - 2);
+    chooseSelect(app, 'playback-speed', '0');
+    app.$('#play-btn').click();
+    await until(() => app.$('#poetry-modal').classList.contains('visible'), 'automatic closing poem');
+    assert.equal(api.getCurrentIndex(), api.getEvents().length - 1);
+    assert.equal(api.isPlaying(), false);
+    assert.equal(app.$('#current-progress-desktop').textContent, '100.0%');
+    assert.ok(poems.includes(app.$('#poetry-quote').textContent));
+    assert.equal(app.$('#poetry-modal').inert, false);
+    assert.equal(app.$('#poetry-modal').getAttribute('aria-hidden'), 'false');
+    const dialogStyle = app.window.getComputedStyle(app.$('#poetry-modal'));
+    assert.equal(dialogStyle.pointerEvents, 'auto', 'the finale accepts pointer input');
+    assert.ok(Number(dialogStyle.zIndex) > Number(app.window.getComputedStyle(app.$('#poetry-backdrop')).zIndex), 'the interactive card is above its dismiss backdrop');
+    assert.equal(app.document.activeElement, app.$('#poetry-close'));
+    assert.equal(app.$('#poetry-backdrop').classList.contains('visible'), true);
+    app.$('#poetry-return').click();
+    assert.equal(app.document.activeElement, app.$('#poetry-open'));
+    assert.ok(app.$('#poetry-open').getClientRects().length, 'the finale entry remains reachable on compact playback');
+    assert.equal(app.$$('#poetry-modal').length, 1);
+    assert.deepEqual(app.errors, []);
+  }
+});
+
+test('the finale triggers on committed navigation and ignores canceled slider previews', async (t) => {
+  const app = await openApp(t, { width: 390 });
+  const api = app.window.JourneyMap;
+  const slider = app.$('#timeline-slider');
+  const last = api.getEvents().length - 1;
+  const visible = () => app.$('#poetry-modal').classList.contains('visible');
+  app.pointer(slider, 'pointerdown');
+  app.input(slider, String(last));
+  await nextFrame(app);
+  assert.equal(visible(), false);
+  assert.equal(app.$('#poetry-open').hidden, true);
+  assert.equal(api.getCurrentIndex(), 0);
+  app.pointer(slider, 'pointercancel');
+  await nextFrame(app);
+  assert.equal(visible(), false);
+  app.pointer(slider, 'pointerdown');
+  app.input(slider, String(last));
+  app.pointer(slider, 'pointerup');
+  await until(visible, 'committed slider finale');
+  app.key(app.document.activeElement, 'Escape');
+  api.goTo(last);
+  await nextFrame(app);
+  assert.equal(visible(), false, 'redrawing the same completed event does not reopen the finale');
+  api.goTo(last - 1);
+  app.$('#next-btn').click();
+  await until(visible, 'next-event finale');
+  app.$('#poetry-close').click();
+  api.goTo(0);
+  app.key(app.document.body, 'End');
+  await until(visible, 'keyboard finale');
+  assert.deepEqual(app.errors, []);
+});
+
+test('the finale retains its poem, cycles every verse, traps focus and supports dismissal and replay', async (t) => {
+  const app = await openApp(t, { width: 390 });
+  const api = app.window.JourneyMap;
+  api.goTo(api.getEvents().length - 1);
+  const dialog = app.$('#poetry-modal');
+  await until(() => dialog.classList.contains('visible'), 'poetry dialog');
+  const poems = (await readProjectJSON('i18n/zh-CN.json')).poems;
+  const seen = new Set([app.$('#poetry-quote').textContent]);
+  for (let index = 1; index < poems.length; index++) {
+    app.$('#poetry-next').click();
+    const poem = app.$('#poetry-quote').textContent;
+    assert.ok(poems.includes(poem));
+    assert.equal(seen.has(poem), false);
+    seen.add(poem);
+  }
+  const lastPoem = app.$('#poetry-quote').textContent;
+  app.$('#poetry-next').click();
+  assert.notEqual(app.$('#poetry-quote').textContent, lastPoem, 'reshuffling does not immediately repeat the previous poem');
+  app.$('#poetry-return').focus();
+  app.key(app.document.activeElement, 'Tab');
+  assert.equal(app.document.activeElement, app.$('#poetry-close'));
+  app.key(app.document.activeElement, 'Tab', { shiftKey: true });
+  assert.equal(app.document.activeElement, app.$('#poetry-return'));
+  app.key(dialog, 'Home');
+  assert.equal(api.getCurrentIndex(), api.getEvents().length - 1, 'dialog keys cannot seek the map');
+  const reading = app.$('#poetry-quote').textContent;
+  await new Promise(resolve => setTimeout(resolve, 4600));
+  assert.equal(dialog.classList.contains('visible'), true, 'the old 4.5 second timeout no longer interrupts reading');
+  assert.equal(app.$('#poetry-quote').textContent, reading);
+  for (const close of [() => app.key(app.document.activeElement, 'Escape'), () => app.$('#poetry-backdrop').click(), () => app.$('#poetry-return').click()]) {
+    close();
+    assert.equal(dialog.classList.contains('visible'), false);
+    assert.equal(dialog.inert, true);
+    assert.equal(app.$('#map').inert, false);
+    assert.equal(app.document.activeElement, app.$('#poetry-open'));
+    app.$('#poetry-open').click();
+    await nextFrame(app);
+    assert.equal(dialog.classList.contains('visible'), true);
+  }
+  app.$('#poetry-replay').click();
+  await nextFrame(app);
+  assert.equal(api.getCurrentIndex(), 0);
+  assert.equal(api.isPlaying(), true);
+  assert.equal(dialog.classList.contains('visible'), false);
+  assert.equal(app.$('#poetry-open').hidden, true);
+  assert.equal(app.$('#poetry-backdrop').classList.contains('visible'), false);
+  assert.equal(app.document.activeElement, app.$('#play-btn'));
+  assert.deepEqual(app.errors, []);
+});
+
+test('the finale waits for other dialogs and cancels a pending reveal when leaving the end', async (t) => {
+  const app = await openApp(t, { reducedMotion: false });
+  const api = app.window.JourneyMap;
+  const last = api.getEvents().length - 1;
+  const visible = () => app.$('#poetry-modal').classList.contains('visible');
+  app.$('#settings-btn').click();
+  await until(() => app.$('#settings-panel').contains(app.document.activeElement), 'settings focus');
+  api.goTo(last);
+  await nextFrame(app);
+  assert.equal(visible(), false, 'completion does not replace an open settings dialog');
+  app.$('#settings-panel-close').click();
+  await until(visible, 'deferred finale');
+  app.$('#poetry-close').click();
+  api.goTo(0);
+  api.goTo(last);
+  api.goTo(0);
+  await nextFrame(app);
+  assert.equal(visible(), false, 'rapid navigation cancels a queued finale');
+  app.$('#journey-toggle').click();
+  await until(() => app.$('#journey-sidebar').contains(app.document.activeElement), 'archive focus');
+  app.$(`#journey-list .journey-item[data-index="${last}"]`).click();
+  await until(visible, 'archive-selection finale');
+  assert.equal(app.$('#journey-sidebar').classList.contains('visible'), false);
+  assert.equal(app.$('#journey-sidebar').inert, true);
+  assert.equal(app.document.activeElement, app.$('#poetry-close'));
   assert.deepEqual(app.errors, []);
 });
 

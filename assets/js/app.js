@@ -107,9 +107,6 @@ let isFeedbackModalVisible = false;
 let isCameraFollowEnabled = true;
 let isDragging = false;
 
-let isPoetryAnimationPlaying = false;
-let poetryAnimationTimeout = null;
-
 let isMusicModalVisible = false;
 let currentMusicIndex = 0;
 let isMusicPlaying = false;
@@ -394,7 +391,7 @@ function focusCurrentEvent() {
   }
 }
 
-function fitJourney() {
+function fitJourney({ overview = false } = {}) {
   if (!map || !trajectoryData) return;
   stopPathFollowCamera();
   map.stop();
@@ -402,12 +399,31 @@ function fitJourney() {
     .flatMap((event) => [event.startCoords, ...event.transitCoords, event.endCoords])
     .filter(Boolean).map(([lng, lat]) => [lat, lng]);
   if (!coordinates.length) return;
+  let restoreView;
+  if (overview && mapTileLayer) {
+    const savedView = { center: map.getCenter(), zoom: map.getZoom(), minZoom: map.getMinZoom() };
+    const tileOptions = { minZoom: mapTileLayer.options.minZoom, minNativeZoom: mapTileLayer.options.minNativeZoom };
+    // Small screens need a wider view to include international visits. Reuse z=4
+    // tiles at that scale: the legacy provider returns blank low-zoom images.
+    mapTileLayer.options.minZoom = 1;
+    mapTileLayer.options.minNativeZoom = tileOptions.minNativeZoom ?? tileOptions.minZoom;
+    map.setMinZoom(1);
+    restoreView = () => {
+      Object.assign(mapTileLayer.options, tileOptions);
+      withProgrammaticCamera(() => {
+        map.stop();
+        map.setView(savedView.center, savedView.zoom, { animate: false });
+        map.setMinZoom(savedView.minZoom);
+      }, 0);
+    };
+  }
   isUserInteracting = true;
   clearTimeout(userInteractionTimeout);
   userInteractionTimeout = setTimeout(() => { isUserInteracting = false; }, 4000);
   withProgrammaticCamera(() => map.fitBounds(L.latLngBounds(coordinates), {
     ...getJourneyMapPadding(), maxZoom: 8, animate: !prefersReducedMotion(), duration: 0.45,
   }), 450);
+  return restoreView;
 }
 
 function setRouteScope(scope) {
@@ -419,6 +435,16 @@ function setRouteScope(scope) {
     updatePathsStatic(currentEventIndex);
     updateEventMarkers(currentEventIndex);
   }
+  return true;
+}
+
+function openCurrentPlaceArchive() {
+  const coordinates = trajectoryData?.events[currentEventIndex]?.endCoords;
+  if (!coordinates) return false;
+  // A keepsake always opens the archive up to this date, including in single-route view.
+  const group = groupEventsByLocation(trajectoryData.events, currentEventIndex).get(coordinates.join(','));
+  if (!group) return false;
+  showDetailPanel(group);
   return true;
 }
 
@@ -434,6 +460,7 @@ window.JourneyMap = Object.freeze({
   getRouteScope: () => routeScope,
   refreshAppearance,
   copyCurrentEventData,
+  openCurrentPlaceArchive,
 });
 
 reducedMotionQuery.addEventListener?.("change", () => {
@@ -830,6 +857,7 @@ function initMap() {
   });
   mapTileLayer.on("loading", () => { mapTileErrors = 0; });
 
+  window.JourneyMoments?.attachMap(map);
   console.log("地图初始化完成");
 }
 
@@ -1401,71 +1429,6 @@ function showTemporaryMessage(message, type = "info") {
       }, 300);
     }
   }, 3000);
-}
-
-/**
- * 显示诗句动画消息（带状态控制）
- */
-function showPoetryMessage() {
-  if (isPoetryAnimationPlaying) {
-    return;
-  }
-
-  isPoetryAnimationPlaying = true;
-
-  if (poetryAnimationTimeout) {
-    clearTimeout(poetryAnimationTimeout);
-    poetryAnimationTimeout = null;
-  }
-
-  const existingPoetry = document.querySelector(".poetry-message");
-  if (existingPoetry) {
-    existingPoetry.remove();
-  }
-
-  const poetryDiv = document.createElement("div");
-  poetryDiv.className = "poetry-message";
-
-  const poetryTexts = i18n.t('poems');
-  const randomPoetry = poetryTexts[Math.floor(Math.random() * poetryTexts.length)];
-  poetryDiv.textContent = randomPoetry;
-
-  document.body.appendChild(poetryDiv);
-
-  requestAnimationFrame(() => {
-    requestAnimationFrame(() => {
-      poetryDiv.classList.add("poetry-animate");
-    });
-  });
-
-  poetryAnimationTimeout = setTimeout(() => {
-    if (poetryDiv.parentNode) {
-      poetryDiv.remove();
-    }
-    isPoetryAnimationPlaying = false;
-    poetryAnimationTimeout = null;
-  }, 4500);
-}
-
-/**
- * 强制停止诗句动画
- */
-function forceStopPoetryAnimation() {
-  if (isPoetryAnimationPlaying) {
-    isPoetryAnimationPlaying = false;
-
-    if (poetryAnimationTimeout) {
-      clearTimeout(poetryAnimationTimeout);
-      poetryAnimationTimeout = null;
-    }
-
-    const poetryElements = document.querySelectorAll(".poetry-message");
-    poetryElements.forEach((element) => {
-      if (element.parentNode) {
-        element.remove();
-      }
-    });
-  }
 }
 
 // ==================== 坐标数据处理 ====================
@@ -2429,6 +2392,7 @@ function showEventAtIndex(index, animated = true, isUserAction = false) {
   // - 用户主动操作时（isUserAction），中断当前动画并立即执行
   if (animationConfig.isAnimating && !isUserAction) return;
 
+  document.dispatchEvent(new Event('journey:before-event-change'));
   if (isUserAction) stopPlayback();
   cancelJourneyAnimation();
   animated = animated && !prefersReducedMotion() && Math.abs(index - currentEventIndex) === 1;
@@ -3157,7 +3121,6 @@ function playNextEvent() {
 
   if (isLastEvent) {
     stopPlayback();
-    showTemporaryMessage(i18n.getCurrentLocale() === "en" ? "You have reached the final event." : "已到达最后一条记录，可从头重播。", "info");
     return;
   }
 
@@ -3471,7 +3434,6 @@ function autoPlayWhenReady(shouldPlay = true) {
             startProgressUpdate();
             updatePlayButton();
             updateMusicBtnState();
-            updateTimelineControlBackground();
             isAutoPlayPending = false;
             resolve(true);
           })
@@ -3480,7 +3442,6 @@ function autoPlayWhenReady(shouldPlay = true) {
             isAutoPlayPending = false;
             updatePlayButton();
             updateMusicBtnState();
-            updateTimelineControlBackground();
             resolve(false);
           });
       } else {
@@ -3695,7 +3656,6 @@ function toggleMusicPlay() {
     clearInterval(musicProgressInterval);
     updatePlayButton();
     updateMusicBtnState();
-    updateTimelineControlBackground();
   } else {
     console.log("开始音乐播放");
     const playBtn = document.getElementById("music-play-btn");
@@ -3718,7 +3678,6 @@ function toggleMusicPlay() {
           startProgressUpdate();
           updatePlayButton();
           updateMusicBtnState();
-          updateTimelineControlBackground();
         })
         .catch((error) => {
           console.error("音频播放失败:", error);
@@ -3742,7 +3701,6 @@ function handleMusicEnded() {
   clearInterval(musicProgressInterval);
   updatePlayButton();
   updateMusicBtnState();
-  updateTimelineControlBackground();
 
   // 自动播放下一首
   setTimeout(() => {
@@ -3861,6 +3819,19 @@ function initMusicControls() {
     musicAudio.addEventListener("timeupdate", updateMusicProgress);
     musicAudio.addEventListener("ended", handleMusicEnded);
     musicAudio.addEventListener("error", handleMusicError);
+    // Native media controls and system interruptions also change the tint.
+    musicAudio.addEventListener("playing", () => {
+      isMusicPlaying = true;
+      startProgressUpdate();
+      updatePlayButton();
+      updateMusicBtnState();
+    });
+    musicAudio.addEventListener("pause", () => {
+      isMusicPlaying = false;
+      clearInterval(musicProgressInterval);
+      updatePlayButton();
+      updateMusicBtnState();
+    });
   }
 }
 
@@ -3928,12 +3899,18 @@ function updateMusicBtnState() {
       musicBtn.classList.remove("playing");
     }
   }
+  updateTimelineControlBackground();
+  const song = MUSIC_PLAYLIST[currentMusicIndex];
+  document.dispatchEvent(new CustomEvent('journey:music-change', {
+    detail: { playing: isMusicPlaying, id: song?.id, isLocal: !!song?.isLocal },
+  }));
 }
 
 /**
  * 开始进度更新
  */
 function startProgressUpdate() {
+  clearInterval(musicProgressInterval);
   musicProgressInterval = setInterval(() => {
     updateMusicProgress();
   }, 1000);
@@ -4005,7 +3982,6 @@ function handleMusicError(e) {
   clearInterval(musicProgressInterval);
   updatePlayButton();
   updateMusicBtnState();
-  updateTimelineControlBackground();
 }
 
 /**
@@ -4129,14 +4105,9 @@ function restoreMusicSettings() {
  * 更新时间轴控制面板背景色
  */
 function updateTimelineControlBackground() {
-  const timelineControl = document.getElementById("timeline-control");
-
-  if (timelineControl) {
-    if (isMusicPlaying) {
-      timelineControl.classList.add("music-playing");
-    } else {
-      timelineControl.classList.remove("music-playing");
-    }
+  // Playback owns one floating surface; browse mode has a separate footer.
+  for (const id of ["playback-dock", "timeline-control", "music-modal", "music-btn"]) {
+    document.getElementById(id)?.classList.toggle("music-playing", isMusicPlaying);
   }
 }
 
@@ -4549,8 +4520,6 @@ async function initApp() {
       stopPlayback();
       clearTimeout(userInteractionTimeout);
       clearTimeout(mapCameraTimeout);
-      forceStopPoetryAnimation();
-
       cleanupMotionResources();
       if (window.motionObserver) {
         window.motionObserver.disconnect();

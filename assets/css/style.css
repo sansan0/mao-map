@@ -272,6 +272,11 @@ input[type='range'] { accent-color: var(--color-accent); cursor: pointer; }
 .song-title { margin-top: 8px; font-family: var(--font-book); font-size: 22px; font-weight: 500; }
 .song-artist { font-size: 12px; color: var(--color-muted); margin-top: 5px; }
 .music-controls { display: flex; align-items: center; justify-content: center; gap: 22px; margin: 8px 0 20px; }
+#music-btn { position: relative; }
+#music-btn::after { content: ''; position: absolute; right: 6px; bottom: 6px; width: 5px; height: 5px; border-radius: 50%; background: var(--color-accent); box-shadow: 0 0 0 2px var(--color-surface); opacity: 0; transform: scale(.6); transition: opacity .3s, transform .3s; pointer-events: none; }
+#music-btn.playing::after { opacity: 1; transform: none; }
+#music-play-btn { transition: box-shadow .45s ease, background-color .25s ease; }
+.music-playing #music-play-btn { box-shadow: 0 0 0 5px var(--color-accent-soft), 0 3px 10px var(--color-accent-border); }
 .music-progress-bar { height: 16px; padding: 5px 0; background: linear-gradient(transparent 5px, var(--color-track) 5px, var(--color-track) 11px, transparent 11px); cursor: pointer; }
 .music-progress-fill { height: 6px; width: 0; background: var(--color-accent); border-radius: 3px; }
 .music-time-info { display: flex; justify-content: space-between; font-size: 10px; color: var(--color-muted); }
@@ -315,8 +320,6 @@ input[type='range'] { accent-color: var(--color-accent); cursor: pointer; }
 .update-toast.visible { transform: translate(-50%, 0); opacity: 1; }
 .update-toast.hiding { opacity: 0; }
 .update-toast-link { flex: 0 0 auto; color: var(--color-accent-ink); text-decoration: underline; }
-.poetry-message { position: fixed; left: 50%; top: 35%; transform: translate(-50%, 8px); z-index: 1050; padding: 18px 26px; border: 1px solid var(--color-line); border-radius: 8px; color: var(--color-route); box-shadow: var(--shadow); max-width: 85%; font-family: var(--font-book); opacity: 0; pointer-events: none; transition: opacity .3s, transform .3s; }
-.poetry-message.poetry-animate { opacity: 1; transform: translate(-50%, 0); }
 ::-webkit-scrollbar { width: 6px; height: 6px; }
 ::-webkit-scrollbar-track { background: transparent; }
 ::-webkit-scrollbar-thumb { background: #d4cdbf; border-radius: 5px; }
@@ -382,4 +385,32 @@ input[type='range'] { accent-color: var(--color-accent); cursor: pointer; }
 @media (max-width: 520px) { .compact .brand-mark { display: none; } .compact .brand h1 { font-size: 16px; } .compact .header-actions .tool-button .icon { width: 19px; } .compact .app-header { padding-inline: 12px; } }
 @media (max-width: 360px) { .compact .brand h1 { font-size: 14px; } .compact .brand p { font-size: 9px; } .compact .app-header { gap: 4px; padding-inline: 10px; } .compact .transport { gap: 8px; padding-inline: 10px; } .compact .current-event-card { padding-inline: 13px; } }
 @media (max-height: 560px) { .current-event-card { min-height: 0; padding-block: 12px; } .compact .app-header { min-height: 54px; padding-block: 6px; } .compact .current-event-card { max-height: 34dvh; padding-block: 8px; } .compact .event-route { display: none; } .compact .transport { padding-block: 6px; } .compact .map-legend { display: none; } }
-@media (prefers-reduced-motion: reduce) { *, *::before, *::after { scroll-behavior: auto !important; animation-duration: .01ms !important; animation-iteration-count: 1 !important; transition-duration: .01ms !important; } }
+/* The finale stays readable until dismissed, with the same keyboard dialog behavior. */
+.poetry-open { display: inline-flex; align-items: center; justify-content: center; flex: 0 0 auto; gap: 6px; min-height: 32px; padding: 2px 8px; border: 1px solid var(--color-accent-border); border-radius: 6px; background: var(--color-accent-soft); color: var(--color-accent-ink); font-size: 11px; font-weight: 600; }
+.poetry-open:hover { border-color: var(--color-accent); }
+.poetry-open .icon { width: 14px; height: 14px; }
+.journey-complete .timeline-track-heading { align-items: center; }
+#poetry-modal { width: 520px; overflow: hidden; color: #fff3da; border-color: rgb(237 198 123 / 55%); background: radial-gradient(ellipse at 50% 0, rgb(245 195 106 / 18%), transparent 65%), linear-gradient(145deg, rgb(148 34 40 / 97%), rgb(94 31 36 / 98%)); box-shadow: 0 12px 48px rgb(69 22 25 / 26%), inset 0 0 0 4px rgb(242 202 134 / 6%); transition-duration: .3s; }
+#poetry-modal .poetry-header { align-items: flex-start; background: transparent; border-bottom: 1px solid rgb(237 198 123 / 22%); padding: 24px 24px 16px; }
+.poetry-header .eyebrow { color: #e4c595; letter-spacing: .14em; margin-bottom: 7px; }
+#poetry-modal h2 { color: #fff3da; font-family: var(--font-book); font-size: 20px; font-weight: 600; letter-spacing: .08em; }
+#poetry-modal .poetry-close { color: #f2d6aa; flex-shrink: 0; }
+#poetry-modal .poetry-close:hover { color: #fff3da; background: rgb(255 243 218 / 12%); }
+.poetry-content { text-align: center; padding: 24px; }
+.poetry-seal { display: inline-flex; align-items: center; justify-content: center; width: 42px; height: 42px; border: 1px solid rgb(237 198 123 / 45%); border-radius: 50%; color: #eac385; }
+.poetry-quote { margin: 22px 0 18px; font-family: 'KaiTi', 'STKaiti', var(--font-book); font-size: clamp(20px, 3.6vw, 28px); line-height: 1.85; letter-spacing: .08em; overflow-wrap: anywhere; }
+.poetry-line { display: block; }
+.poetry-message.visible .poetry-line { animation: poetry-line-reveal .6s both; animation-delay: calc(120ms + var(--line-index) * 100ms); }
+.poetry-hint { color: #e4c595; font-size: 12px; }
+.poetry-actions { display: flex; flex-wrap: wrap; justify-content: center; gap: 10px; margin-top: 24px; }
+#poetry-modal .secondary-button { min-height: 44px; color: #fff3da; background: rgb(255 243 218 / 6%); border-color: rgb(237 198 123 / 40%); }
+#poetry-modal .secondary-button:hover { background: rgb(255 243 218 / 14%); border-color: #eac385; }
+#poetry-modal .poetry-return { color: #6f242a; background: #f2d6aa; border-color: #f2d6aa; }
+#poetry-modal .poetry-return:hover { color: #6f242a; background: #fff3da; }
+.poetry-message :focus-visible { outline-color: #f2d6aa; }
+.compact .poetry-open { min-height: 44px; }
+body.compact #poetry-modal { width: 100%; }
+.compact .poetry-actions .secondary-button { flex: 1 1 auto; }
+@keyframes poetry-line-reveal { from { opacity: 0; transform: translateY(8px); } to { opacity: 1; transform: none; } }
+@media (max-height: 560px) { .poetry-content { padding-block: 14px; } .poetry-seal { display: none; } .poetry-quote { margin-block: 6px 12px; font-size: 20px; } .poetry-actions { margin-top: 14px; } }
+@media (prefers-reduced-motion: reduce) { *, *::before, *::after { scroll-behavior: auto !important; animation-duration: .01ms !important; animation-delay: 0s !important; animation-iteration-count: 1 !important; transition-duration: .01ms !important; } }

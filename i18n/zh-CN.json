@@ -253,6 +253,52 @@
     "finished": "历程已浏览完 · 可从头重播",
     "closeSource": "收起史料",
     "musicProgress": "音乐播放进度",
+    "poetry": {
+      "open": "查看终章彩蛋",
+      "entry": "终章",
+      "eyebrow": "1893 — 1976 · 足迹终章",
+      "title": "山河走遍，诗意长留",
+      "hint": "以一句诗，为这段旅程作结。",
+      "next": "换一句",
+      "replay": "从头重播",
+      "return": "回到地图"
+    },
+    "moments": {
+      "pickPoem": "拾一句诗",
+      "poemEyebrow": "沿途拾诗 · 毛泽东诗词节选",
+      "poemDate": "创作于 {date} · 原作节选",
+      "poemSource": "题名与创作背景 · 人民网",
+      "continueJourney": "继续这段旅程",
+      "openStamp": "{place} · 查看此地足迹",
+      "stampHint": "查看截至此刻的地点记录",
+      "recall": "回望足迹",
+      "finishRecall": "结束回望",
+      "recallDrawing": "循着来路，重读这一生的山河。",
+      "recallComplete": "足迹已展开，可以停留片刻。",
+      "places": {
+        "shaoshan": "韶山",
+        "changsha": "长沙",
+        "jinggangshan": "井冈山",
+        "ruijin": "瑞金",
+        "zunyi": "遵义",
+        "yanan": "延安",
+        "beijing": "北京"
+      },
+      "poems": {
+        "changsha": {
+          "title": "沁园春·长沙",
+          "context": "这首词写于1925年。沿着此刻的长沙足迹，回读橘子洲头的秋日意象。"
+        },
+        "autumn": {
+          "title": "西江月·秋收起义",
+          "context": "这首1927年的词记述了秋收起义。在三湾改编这一节点，回望起义的来路。"
+        },
+        "march": {
+          "title": "七律·长征",
+          "context": "这首诗题注1935年10月，以诗句回望长征。此处关联的是中央红军到达吴起镇的记录。"
+        }
+      }
+    },
     "periods": {
       "youth": "求学与探索",
       "awakening": "革命初期",

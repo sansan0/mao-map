@@ -253,6 +253,52 @@
     "finished": "Journey complete · Replay available",
     "closeSource": "Hide sources",
     "musicProgress": "Music playback position",
+    "poetry": {
+      "open": "View the journey’s closing poem",
+      "entry": "Finale",
+      "eyebrow": "1893 — 1976 · Journey’s end",
+      "title": "A journey ends, the words remain",
+      "hint": "A line of poetry to close this journey.",
+      "next": "Another verse",
+      "replay": "Replay journey",
+      "return": "Back to the map"
+    },
+    "moments": {
+      "pickPoem": "A verse along the way",
+      "poemEyebrow": "Along the journey · Excerpts from Mao Zedong's poetry",
+      "poemDate": "Written in {date} · Original Chinese excerpt",
+      "poemSource": "Title and historical context · People's Daily Online",
+      "continueJourney": "Continue the journey",
+      "openStamp": "{place} · Explore this place",
+      "stampHint": "Read this place's records up to the current date",
+      "recall": "Retrace the footsteps",
+      "finishRecall": "Finish reflection",
+      "recallDrawing": "Follow the places that shaped this life.",
+      "recallComplete": "The journey is unfolded. Stay a moment.",
+      "places": {
+        "shaoshan": "Shaoshan",
+        "changsha": "Changsha",
+        "jinggangshan": "Jinggangshan",
+        "ruijin": "Ruijin",
+        "zunyi": "Zunyi",
+        "yanan": "Yan'an",
+        "beijing": "Beijing"
+      },
+      "poems": {
+        "changsha": {
+          "title": "Qinyuanchun · Changsha",
+          "context": "Written in 1925. This later Changsha record offers a moment to return to the poem's autumn imagery on Orange Isle."
+        },
+        "autumn": {
+          "title": "Xijiangyue · Autumn Harvest Uprising",
+          "context": "This 1927 poem recounts the Autumn Harvest Uprising. The Sanwan Reorganization record offers a moment to reflect on that earlier uprising."
+        },
+        "march": {
+          "title": "Seven-Character Regulated Verse · The Long March",
+          "context": "Dated October 1935, this poem reflects on the Long March. Here it accompanies the record of the Central Red Army's arrival in Wuqi."
+        }
+      }
+    },
     "periods": {
       "youth": "Early life and education",
       "awakening": "Early revolutionary years",

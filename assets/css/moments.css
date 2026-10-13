@@ -1,0 +1,69 @@
+/* Brief discoveries use paper, ink and lamplight; the map stays the main surface. */
+.event-keepsakes { display: flex; align-items: center; flex-wrap: wrap; gap: 4px 10px; margin-top: 6px; }
+.trail-stamp { display: inline-flex; align-items: center; gap: 7px; min-height: 32px; padding: 3px 8px; border: 3px double rgb(155 87 71 / 48%); border-radius: 4px; color: #8d4d3f; background: rgb(155 87 71 / 4%); font-size: 11px; line-height: 1.3; transform-origin: 35% 70%; }
+#trail-stamp-place { font-family: 'KaiTi', 'STKaiti', var(--font-book); font-size: 14px; letter-spacing: .1em; }
+#trail-stamp-year { padding-left: 7px; border-left: 1px solid rgb(155 87 71 / 24%); font-variant-numeric: tabular-nums; letter-spacing: .04em; }
+.trail-stamp:hover { border-color: #9b5747; background: rgb(155 87 71 / 8%); }
+.trail-stamp.is-new { animation: trail-stamp-arrive .65s both; }
+.trail-poem-open { min-height: 32px; font-size: 11px; }
+.trail-poem-open .icon { width: 14px; height: 14px; }
+@keyframes trail-stamp-arrive {
+  0% { opacity: 0; transform: scale(1.22) rotate(-7deg); }
+  60% { opacity: 1; transform: scale(.98) rotate(-2deg); }
+  100% { opacity: 1; transform: none; }
+}
+
+/* The artwork is local and purely decorative; it never covers controls or receives focus. */
+.current-song-info { position: relative; isolation: isolate; }
+.current-song-info > :not(.music-prelude) { position: relative; z-index: 1; }
+.music-prelude { position: absolute; inset: -3px -8px 0; overflow: hidden; border-radius: 10px; pointer-events: none; animation: music-prelude-reveal 2.6s both; }
+.music-prelude::before { content: ''; position: absolute; inset: 0; z-index: 1; opacity: .42; background: url('../img/journey-landscape.png') center bottom / 100% auto no-repeat; -webkit-mask-image: linear-gradient(transparent 10%, #000); mask-image: linear-gradient(transparent 10%, #000); }
+.music-prelude[data-song="dongfanghong"]::after { content: ''; position: absolute; bottom: 10px; right: 17%; width: 24px; height: 24px; border-radius: 50%; background: #c7a15c; box-shadow: 0 0 18px rgb(212 179 111 / 20%); animation: prelude-sunrise 2s both; }
+.music-prelude[data-song="internationale"]::after { content: ''; position: absolute; z-index: 2; bottom: 23px; right: 17%; width: 4px; height: 4px; border-radius: 50%; color: #a18551; background: currentColor; box-shadow: -24px -9px 0 currentColor, -49px 1px 0 currentColor, -77px -5px 0 currentColor; animation: prelude-stars 1.6s both; }
+@keyframes music-prelude-reveal { 0% { opacity: 0; } 20%, 74% { opacity: 1; } 100% { opacity: 0; } }
+@keyframes prelude-sunrise { from { opacity: 0; transform: translateY(24px); } to { opacity: .85; transform: translateY(-9px); } }
+@keyframes prelude-stars { from { opacity: 0; clip-path: inset(-16px 0 -12px -90px); } to { opacity: .9; clip-path: inset(-16px -8px -12px -90px); } }
+.moment-star { animation: moment-star-arrive .5s both; }
+.moment-star-current { stroke-width: 2; }
+@keyframes moment-star-arrive { from { opacity: 0; } to { opacity: 1; } }
+
+#trail-poem-modal { width: 500px; }
+#trail-poem-modal .dialog-header { align-items: flex-start; }
+#trail-poem-modal .dialog-header .eyebrow { font-size: 10px; margin-bottom: 6px; }
+#trail-poem-modal h2 { font-family: var(--font-book); font-size: 20px; }
+.trail-poem-content { position: relative; isolation: isolate; text-align: center; padding: 24px 28px; }
+.trail-poem-content::before { content: ''; position: absolute; inset: 0; z-index: -1; pointer-events: none; opacity: .24; background: url('../img/journey-landscape.png') center bottom / cover no-repeat; }
+.trail-poem-date { color: var(--color-muted); font-size: 11px; letter-spacing: .08em; }
+#trail-poem-quote { margin-block: 25px; line-height: 2; color: var(--color-ink); }
+.trail-poem-dialog.visible .poetry-line { animation: poetry-line-reveal .6s both; animation-delay: calc(100ms + var(--line-index) * 130ms); }
+.trail-poem-context { max-width: 32em; margin-inline: auto; color: var(--color-ink); font-size: 12px; line-height: 1.9; }
+#trail-poem-source { margin-top: 7px; text-decoration: underline; text-underline-offset: 3px; font-size: 11px; }
+#trail-poem-return { display: flex; width: fit-content; min-height: 44px; margin: 16px auto 0; background: var(--color-surface); }
+#poetry-modal .poetry-recall { flex-basis: 100%; border-color: rgb(237 198 123 / 60%); }
+
+.journey-recollection { position: absolute; z-index: 650; top: 22px; left: 50%; transform: translateX(-50%); width: min(380px, calc(100% - 160px)); max-height: calc(100% - 44px); overflow: auto; overscroll-behavior: contain; pointer-events: auto; display: flex; align-items: center; gap: 16px; padding: 12px 16px; border: 1px solid var(--color-line); border-radius: 10px; background: var(--color-surface); box-shadow: var(--shadow); }
+.journey-recollection > div:first-child { flex: 1; min-width: 0; }
+.journey-recollection .eyebrow { color: var(--color-muted); font-size: 10px; }
+#recollection-years { display: block; font-family: var(--font-book); font-size: 19px; font-weight: 500; letter-spacing: .07em; }
+#recollection-status { color: var(--color-muted); font-size: 11px; margin-top: 3px; }
+.recollection-actions { display: flex; flex-direction: column; flex-shrink: 0; }
+.recollection-actions .text-button { min-height: 36px; font-size: 11px; }
+body[data-view-mode="playback"] .journey-recollection { top: calc(86px + var(--safe-top)); max-height: calc(100% - var(--dock-height, 250px) - 126px - var(--safe-top) - var(--safe-bottom)); }
+.compact :is(.trail-stamp, .trail-poem-open) { min-height: 44px; }
+body.compact #trail-poem-modal { width: 100%; }
+.compact .journey-recollection { gap: 5px; padding: 10px 12px; flex-direction: column; align-items: stretch; width: min(340px, calc(100% - 140px)); }
+.compact .recollection-actions { flex-direction: row; flex-wrap: wrap; gap: 0 6px; }
+.compact .recollection-actions .text-button { min-height: 44px; }
+body[data-view-mode="playback"].compact .journey-recollection { top: calc(76px + var(--safe-top)); }
+@media (max-height: 560px) {
+  .trail-poem-content { padding-block: 12px; }
+  #trail-poem-quote { margin-block: 10px; font-size: 21px; }
+  .compact .journey-recollection { flex-direction: row; align-items: center; width: min(360px, calc(100% - 140px)); padding: 6px 10px; }
+  .compact .recollection-actions { flex-direction: column; gap: 0; }
+  #recollection-status { display: none; }
+}
+@media (prefers-reduced-motion: reduce) {
+  .trail-stamp.is-new, .music-prelude, .music-prelude::after, .moment-star,
+  .trail-poem-dialog.visible .poetry-line { animation: none !important; }
+  .music-prelude[data-song="dongfanghong"]::after { opacity: .65; transform: translateY(-9px); }
+}

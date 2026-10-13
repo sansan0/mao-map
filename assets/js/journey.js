@@ -21,6 +21,13 @@
   let returnFocus = null;
   let composing = false;
   let isPreviewing = false;
+  let completionReached = false;
+  let poetryPending = false;
+  let poetryFrame = null;
+  let poemIndex = -1;
+  let poemOrder = [];
+  const poetryDialog = $('poetry-modal');
+  const poetryEntry = $('poetry-open');
   const sidebar = $('journey-sidebar');
   const archiveSummary = document.querySelector('.player-caption');
   const source = $('event-source');
@@ -406,6 +413,7 @@
       if (window.JourneyMap?.isPlaying() && !sidebar.contains(document.activeElement)) scrollToCurrent();
     }
     updatePlaybackStatus();
+    syncPoetryEntry();
   }
 
   function updatePlaybackStatus() {
@@ -489,11 +497,122 @@
   });
   $('copy-event').addEventListener('click', () => window.JourneyMap?.copyCurrentEventData());
 
+  function syncPoetryEntry() {
+    const available = !isPreviewing && events.length > 0 && currentIndex === events.length - 1;
+    poetryEntry.hidden = !available;
+    $('current-progress-desktop').hidden = available;
+    $('timeline-control').classList.toggle('journey-complete', available);
+  }
+
+  function renderPoetry() {
+    const poems = i18n.t('poems');
+    if (!Array.isArray(poems) || !poems.length) return;
+    const text = poems[poemIndex] || poems[0];
+    const lines = text.split(/(?<=，)|\s*\/\s*/u).filter(Boolean).map((line, index) => {
+      const element = make('span', 'poetry-line', line.trim());
+      element.style.setProperty('--line-index', index);
+      return element;
+    });
+    $('poetry-quote').replaceChildren(...lines);
+    $('poetry-next').disabled = poems.length < 2;
+  }
+
+  function nextPoem() {
+    const poems = i18n.t('poems');
+    if (!Array.isArray(poems) || !poems.length) return;
+    if (!poemOrder.length) {
+      poemOrder = poems.map((_, index) => index);
+      for (let index = poemOrder.length - 1; index > 0; index--) {
+        const other = Math.floor(Math.random() * (index + 1));
+        [poemOrder[index], poemOrder[other]] = [poemOrder[other], poemOrder[index]];
+      }
+      // Read every verse before reshuffling, without repeating at a cycle boundary.
+      const last = poemOrder.length - 1;
+      if (last > 0 && poemOrder[last] === poemIndex) [poemOrder[0], poemOrder[last]] = [poemOrder[last], poemOrder[0]];
+    }
+    poemIndex = poemOrder.pop();
+    renderPoetry();
+  }
+
+  function showPoetry() {
+    if (poetryEntry.hidden || poetryDialog.classList.contains('visible')) return;
+    poetryPending = false;
+    nextPoem();
+    $('poetry-backdrop').classList.add('visible');
+    poetryDialog.classList.add('visible');
+    activateOverlay(poetryDialog);
+  }
+
+  function hidePoetry() {
+    poetryDialog.classList.remove('visible');
+    $('poetry-backdrop').classList.remove('visible');
+    poetryDialog.inert = true;
+    poetryDialog.setAttribute('aria-hidden', 'true');
+    releaseOverlay(poetryDialog);
+  }
+
+  function queuePoetryReveal() {
+    cancelAnimationFrame(poetryFrame);
+    poetryFrame = requestAnimationFrame(() => {
+      poetryFrame = null;
+      // Let timeline commits and drawer closing finish; never interrupt another dialog.
+      if (poetryPending && completionReached && !isPreviewing && !activeOverlay) showPoetry();
+    });
+  }
+
+  function syncJourneyCompletion() {
+    const complete = events.length > 0 && currentIndex === events.length - 1;
+    if (!complete) {
+      completionReached = false;
+      poetryPending = false;
+      cancelAnimationFrame(poetryFrame);
+      poetryFrame = null;
+      hidePoetry();
+      return;
+    }
+    if (!completionReached) {
+      completionReached = true;
+      poetryPending = true;
+    }
+    if (poetryPending) queuePoetryReveal();
+  }
+
+  poetryEntry.addEventListener('click', showPoetry);
+  $('poetry-next').addEventListener('click', nextPoem);
+  ['poetry-close', 'poetry-return', 'poetry-backdrop'].forEach(id => $(id).addEventListener('click', hidePoetry));
+  $('poetry-replay').addEventListener('click', () => {
+    hidePoetry();
+    window.JourneyMap?.togglePlay();
+    $('play-btn').focus({ preventScroll: true });
+  });
+  $('poetry-recall').addEventListener('click', () => {
+    hidePoetry();
+    document.dispatchEvent(new Event('journey:recall'));
+  });
+
+  const trailPoem = $('trail-poem-modal');
+  document.addEventListener('journey:open-poem', () => {
+    $('trail-poem-backdrop').classList.add('visible');
+    trailPoem.classList.add('visible');
+    activateOverlay(trailPoem);
+  });
+  function hideTrailPoem() {
+    trailPoem.classList.remove('visible');
+    $('trail-poem-backdrop').classList.remove('visible');
+    trailPoem.inert = true;
+    trailPoem.setAttribute('aria-hidden', 'true');
+    releaseOverlay(trailPoem);
+  }
+  ['trail-poem-close', 'trail-poem-return', 'trail-poem-backdrop'].forEach(id => $(id).addEventListener('click', hideTrailPoem));
+  document.addEventListener('journey:event-change', hideTrailPoem);
+
   const dialogs = [...document.querySelectorAll('.surface-dialog')];
   const closeButtons = {
     'settings-panel': 'settings-panel-close', 'music-modal': 'music-modal-close',
     'feedback-modal': 'feedback-modal-close', 'wechat-qr-modal': 'wechat-qr-close',
     'location-detail-panel': 'panel-close-btn',
+    'poetry-modal': 'poetry-close',
+    'trail-poem-modal': 'trail-poem-close',
   };
   function closeDialog(dialog) {
     if (dialog?.classList.contains('visible')) $(closeButtons[dialog.id]).click();
@@ -516,7 +635,7 @@
     window.JourneyControls?.close();
     setMapToolsOpen(false, true);
     const previous = activeOverlay;
-    const opener = previous ? returnFocus : document.activeElement;
+    const opener = overlay === poetryDialog ? poetryEntry : previous ? returnFocus : document.activeElement;
     activeOverlay = overlay;
     returnFocus = opener;
     if (previous === sidebar) {
@@ -532,6 +651,7 @@
       ? ($('journey-search').disabled ? $('journey-close') : $('journey-search'))
       : overlay.querySelector('.dialog-header button');
     (focusTarget || overlay).focus({ preventScroll: true });
+    document.dispatchEvent(new CustomEvent('journey:overlay-change', { detail: { id: overlay.id } }));
   }
   function releaseOverlay(overlay) {
     if (activeOverlay !== overlay) return;
@@ -539,9 +659,11 @@
     activeOverlay = null;
     syncBackgroundInert();
     const fallback = document.querySelector(`button[data-view-mode="${viewMode}"]`);
-    const target = returnFocus?.isConnected && !returnFocus.closest('[hidden], [inert]') ? returnFocus : fallback;
+    const target = returnFocus?.isConnected && !returnFocus.disabled && !returnFocus.closest('[hidden], [inert]') ? returnFocus : fallback;
     target.focus({ preventScroll: true });
     returnFocus = null;
+    document.dispatchEvent(new CustomEvent('journey:overlay-change', { detail: { id: null } }));
+    if (poetryPending) queuePoetryReveal();
   }
   function openSidebar() {
     if (!usesArchiveDrawer()) {
@@ -679,11 +801,15 @@
     layoutObserver.observe(dock);
   }
   document.addEventListener('journey:data-ready', event => setData(event.detail.events));
-  document.addEventListener('journey:event-change', event => renderCurrent(event.detail.event, event.detail.index));
+  document.addEventListener('journey:event-change', event => {
+    renderCurrent(event.detail.event, event.detail.index);
+    syncJourneyCompletion();
+  });
   document.addEventListener('journey:event-preview', event => renderCurrent(event.detail.event, event.detail.index, true));
   document.addEventListener('journey:locale-change', () => {
     syncControlLabels();
     syncSourceControl();
+    if (poemIndex >= 0) renderPoetry();
     if (events.length) { renderPeriods(); renderList(); renderCurrent(events[currentIndex], currentIndex); }
   });
   ['copy-event', 'read-event', 'focus-current', 'fit-journey', 'find-current', 'period-select', 'journey-search'].forEach(id => { $(id).disabled = true; });

@@ -21,7 +21,7 @@
   }
 
   const invoke = TAURI.invoke;
-  const APP_VERSION = '2.3.0';
+  const APP_VERSION = '2.4.0';
 
   const VERSION_SOURCES = [
     'https://sansan0.github.io/mao-map/version.json',
